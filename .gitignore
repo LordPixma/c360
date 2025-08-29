@@ -6,6 +6,7 @@ dist/
 build/
 .next/
 .vercel/
+*.tsbuildinfo
 
 # Cloudflare
 .wrangler/
