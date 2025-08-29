@@ -1,6 +1,10 @@
 type Env = {
   SESSION_SECRET: string;
   TURNSTILE_SECRET_KEY?: string;
+  // Microsoft 365 OAuth configuration
+  M365_CLIENT_ID?: string;
+  M365_CLIENT_SECRET?: string;
+  M365_REDIRECT_URI?: string;
   DB: D1Database;
   // cache provided by platform
   __STATIC_CONTENT?: unknown;
@@ -227,6 +231,96 @@ async function verifyTurnstile(env: Env, token?: string, ip?: string | null) {
     return { success: Boolean(out.success), out };
   } catch {
     return { success: false };
+  }
+}
+
+// Microsoft 365 OAuth and tenant integration functions
+async function getM365TenantMapping(env: Env, tenantId: string) {
+  return await env.DB.prepare('SELECT * FROM m365_tenant_mapping WHERE tenant_id = ?').bind(tenantId).first<any>();
+}
+
+async function setM365TenantMapping(env: Env, tenantId: string, m365TenantId: string, m365TenantDomain: string) {
+  await env.DB.prepare(`
+    INSERT INTO m365_tenant_mapping(tenant_id, m365_tenant_id, m365_tenant_domain) 
+    VALUES(?, ?, ?) 
+    ON CONFLICT(tenant_id) DO UPDATE SET 
+      m365_tenant_id=excluded.m365_tenant_id, 
+      m365_tenant_domain=excluded.m365_tenant_domain,
+      updated_at=(strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  `).bind(tenantId, m365TenantId, m365TenantDomain).run();
+}
+
+async function getM365User(env: Env, m365ObjectId: string, m365TenantId: string) {
+  return await env.DB.prepare('SELECT * FROM m365_users WHERE m365_object_id = ? AND m365_tenant_id = ?').bind(m365ObjectId, m365TenantId).first<any>();
+}
+
+async function createM365User(env: Env, userId: string, m365ObjectId: string, m365Email: string, m365TenantId: string) {
+  const id = crypto.randomUUID();
+  await env.DB.prepare(`
+    INSERT INTO m365_users(id, user_id, m365_object_id, m365_email, m365_tenant_id, last_login_at) 
+    VALUES(?, ?, ?, ?, ?, (strftime('%Y-%m-%dT%H:%M:%fZ','now')))
+  `).bind(id, userId, m365ObjectId, m365Email, m365TenantId).run();
+  return { id };
+}
+
+async function updateM365UserLogin(env: Env, m365UserId: string) {
+  await env.DB.prepare('UPDATE m365_users SET last_login_at = (strftime(\'%Y-%m-%dT%H:%M:%fZ\',\'now\')) WHERE id = ?').bind(m365UserId).run();
+}
+
+async function exchangeM365Code(env: Env, code: string, state: string): Promise<{ 
+  accessToken: string; 
+  idToken: string; 
+  userInfo: any; 
+  tenantId: string;
+} | null> {
+  if (!env.M365_CLIENT_ID || !env.M365_CLIENT_SECRET || !env.M365_REDIRECT_URI) {
+    return null;
+  }
+
+  try {
+    // Exchange authorization code for tokens
+    const tokenResponse = await fetch('https://login.microsoftonline.com/common/oauth2/v2.0/token', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: new URLSearchParams({
+        client_id: env.M365_CLIENT_ID,
+        client_secret: env.M365_CLIENT_SECRET,
+        code,
+        grant_type: 'authorization_code',
+        redirect_uri: env.M365_REDIRECT_URI,
+        scope: 'openid profile email User.Read',
+      }),
+    });
+
+    if (!tokenResponse.ok) {
+      return null;
+    }
+
+    const tokens = await tokenResponse.json<any>();
+    
+    // Get user information using access token
+    const userResponse = await fetch('https://graph.microsoft.com/v1.0/me', {
+      headers: {
+        'Authorization': `Bearer ${tokens.access_token}`,
+      },
+    });
+
+    if (!userResponse.ok) {
+      return null;
+    }
+
+    const userInfo = await userResponse.json<any>();
+    
+    return {
+      accessToken: tokens.access_token,
+      idToken: tokens.id_token,
+      userInfo,
+      tenantId: userInfo.id?.split('@')[1] || '', // Extract tenant from user principal name
+    };
+  } catch (error) {
+    return null;
   }
 }
 
@@ -483,6 +577,194 @@ export default {
         cors(request, r.headers);
         return r;
       }
+    }
+
+    // Microsoft 365 OAuth endpoints
+    if (path === '/auth/m365/authorize' && method === 'GET') {
+      if (!env.M365_CLIENT_ID || !env.M365_REDIRECT_URI) {
+        const r = json({ error: 'M365 OAuth not configured' }, 500);
+        cors(request, r.headers);
+        return r;
+      }
+      
+      const url = new URL(request.url);
+      const tenantSlug = url.searchParams.get('tenant');
+      if (!tenantSlug) {
+        const r = json({ error: 'tenant required' }, 400);
+        cors(request, r.headers);
+        return r;
+      }
+
+      const state = `${tenantSlug}:${crypto.randomUUID()}`;
+      const authUrl = new URL('https://login.microsoftonline.com/common/oauth2/v2.0/authorize');
+      authUrl.searchParams.set('client_id', env.M365_CLIENT_ID);
+      authUrl.searchParams.set('response_type', 'code');
+      authUrl.searchParams.set('redirect_uri', env.M365_REDIRECT_URI);
+      authUrl.searchParams.set('scope', 'openid profile email User.Read');
+      authUrl.searchParams.set('state', state);
+
+      const r = json({ 
+        authorizeUrl: authUrl.toString(),
+        state 
+      });
+      cors(request, r.headers);
+      return r;
+    }
+
+    if (path === '/auth/m365/callback' && method === 'POST') {
+      const body = await readJson<{ code?: string; state?: string }>(request);
+      if (!body?.code || !body?.state) {
+        const r = json({ error: 'invalid request' }, 400);
+        cors(request, r.headers);
+        return r;
+      }
+
+      const [tenantSlug] = body.state.split(':');
+      if (!tenantSlug) {
+        const r = json({ error: 'invalid state' }, 400);
+        cors(request, r.headers);
+        return r;
+      }
+
+      const tenant = await getTenantBySlug(env, tenantSlug);
+      if (!tenant) {
+        const r = json({ error: 'tenant not found' }, 404);
+        cors(request, r.headers);
+        return r;
+      }
+
+      const oauthResult = await exchangeM365Code(env, body.code, body.state);
+      if (!oauthResult) {
+        const r = json({ error: 'OAuth exchange failed' }, 400);
+        cors(request, r.headers);
+        return r;
+      }
+
+      const { userInfo } = oauthResult;
+      const email = userInfo.mail || userInfo.userPrincipalName;
+      const m365ObjectId = userInfo.id;
+      const m365TenantId = userInfo.id?.split('@')[1] || '';
+
+      if (!email || !m365ObjectId) {
+        const r = json({ error: 'invalid user info from M365' }, 400);
+        cors(request, r.headers);
+        return r;
+      }
+
+      // Check if M365 tenant mapping exists and is configured for this tenant
+      const m365Mapping = await getM365TenantMapping(env, tenant.id);
+      if (!m365Mapping) {
+        const r = json({ error: 'M365 integration not configured for this tenant' }, 400);
+        cors(request, r.headers);
+        return r;
+      }
+
+      // Verify the M365 tenant matches the configured one
+      if (m365Mapping.m365_tenant_id !== m365TenantId) {
+        const r = json({ error: 'M365 tenant mismatch' }, 403);
+        cors(request, r.headers);
+        return r;
+      }
+
+      // Check if user already exists in M365 mapping
+      let m365User = await getM365User(env, m365ObjectId, m365TenantId);
+      let userId: string;
+
+      if (m365User) {
+        // Update last login
+        await updateM365UserLogin(env, m365User.id);
+        userId = m365User.user_id;
+      } else if (m365Mapping.auto_provision) {
+        // Auto-provision user if enabled
+        const existingUser = await getUserByEmail(env, tenant.id, email.toLowerCase());
+        
+        if (existingUser) {
+          // Link existing user to M365
+          userId = existingUser.id;
+          await createM365User(env, userId, m365ObjectId, email, m365TenantId);
+        } else {
+          // Create new user
+          const tempPassword = crypto.randomUUID();
+          const newUser = await insertUser(env, tenant.id, email.toLowerCase(), userInfo.displayName || 'User', tempPassword);
+          userId = newUser.id;
+          await createM365User(env, userId, m365ObjectId, email, m365TenantId);
+        }
+      } else {
+        const r = json({ error: 'user not found and auto-provisioning disabled' }, 403);
+        cors(request, r.headers);
+        return r;
+      }
+
+      // Create session
+      const session = await createSession(env, { 
+        sub: userId, 
+        email: email.toLowerCase(), 
+        tenant: tenantSlug 
+      }, 60 * 60 * 12);
+
+      const r = json({ ok: true, tenant: tenantSlug });
+      r.headers.append('set-cookie', toCookie(session, 60 * 60 * 12));
+      cors(request, r.headers);
+      return r;
+    }
+
+    // M365 tenant configuration endpoints (admin only)
+    if (path === '/admin/m365/configure' && method === 'POST') {
+      const body = await readJson<{ 
+        tenantSlug?: string; 
+        m365TenantId?: string; 
+        m365TenantDomain?: string;
+        oauthEnabled?: boolean;
+        autoProvision?: boolean;
+      }>(request);
+      
+      if (!body?.tenantSlug || !body?.m365TenantId || !body?.m365TenantDomain) {
+        const r = json({ error: 'missing required fields' }, 400);
+        cors(request, r.headers);
+        return r;
+      }
+
+      const tenant = await getTenantBySlug(env, body.tenantSlug);
+      if (!tenant) {
+        const r = json({ error: 'tenant not found' }, 404);
+        cors(request, r.headers);
+        return r;
+      }
+
+      await setM365TenantMapping(env, tenant.id, body.m365TenantId, body.m365TenantDomain);
+      
+      const r = json({ ok: true });
+      cors(request, r.headers);
+      return r;
+    }
+
+    if (path === '/admin/m365/status' && method === 'GET') {
+      const url = new URL(request.url);
+      const tenantSlug = url.searchParams.get('tenant');
+      
+      if (!tenantSlug) {
+        const r = json({ error: 'tenant required' }, 400);
+        cors(request, r.headers);
+        return r;
+      }
+
+      const tenant = await getTenantBySlug(env, tenantSlug);
+      if (!tenant) {
+        const r = json({ error: 'tenant not found' }, 404);
+        cors(request, r.headers);
+        return r;
+      }
+
+      const m365Mapping = await getM365TenantMapping(env, tenant.id);
+      const configured = Boolean(m365Mapping);
+      
+      const r = json({ 
+        configured,
+        mapping: m365Mapping || null,
+        oauthAvailable: Boolean(env.M365_CLIENT_ID && env.M365_CLIENT_SECRET && env.M365_REDIRECT_URI)
+      });
+      cors(request, r.headers);
+      return r;
     }
 
     const res = text('Not Found', 404);
