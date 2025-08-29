@@ -155,7 +155,7 @@ async function getUserByEmail(env: Env, tenantId: string, email: string) {
 async function getUserById(env: Env, tenantId: string, userId: string) {
   return await env.DB.prepare('SELECT * FROM users WHERE tenant_id = ? AND id = ?').bind(tenantId, userId).first<any>();
 }
-async function listUsers(env: Env, tenantId: string, limit = 50, offset = 0) {
+async function listUsers(env: Env, tenantId: string, limit: string = '50', offset: string = '0') {
   return await env.DB.prepare('SELECT id, email, name, role, status, created_at FROM users WHERE tenant_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?').bind(tenantId, limit, offset).all<any>();
 }
 async function updateUser(env: Env, tenantId: string, userId: string, updates: { name?: string; role?: string; status?: string }) {
@@ -249,7 +249,7 @@ async function createAuditLog(env: Env, tenantId: string, actorUserId: string | 
   await env.DB.prepare('INSERT INTO audit_log(id, tenant_id, actor_user_id, action, target, details_json) VALUES(?, ?, ?, ?, ?, ?)').bind(id, tenantId, actorUserId, action, target, detailsJson).run();
   return { id };
 }
-async function getAuditLogs(env: Env, tenantId: string, limit = 50, offset = 0) {
+async function getAuditLogs(env: Env, tenantId: string, limit: string = '50', offset: string = '0') {
   return await env.DB.prepare('SELECT al.*, u.name as actor_name, u.email as actor_email FROM audit_log al LEFT JOIN users u ON al.actor_user_id = u.id WHERE al.tenant_id = ? ORDER BY al.ts DESC LIMIT ? OFFSET ?').bind(tenantId, limit, offset).all<any>();
 }
 
@@ -271,7 +271,7 @@ async function disableFrameworkForTenant(env: Env, tenantId: string, frameworkId
 }
 
 // Control functions
-async function getControls(env: Env, tenantId: string, frameworkId?: string, limit = 50, offset = 0) {
+async function getControls(env: Env, tenantId: string, frameworkId?: string, limit: string = '50', offset: string = '0') {
   if (frameworkId) {
     return await env.DB.prepare('SELECT c.*, u.name as owner_name FROM controls c LEFT JOIN users u ON c.owner_user_id = u.id WHERE c.tenant_id = ? AND c.framework_id = ? ORDER BY c.code LIMIT ? OFFSET ?').bind(tenantId, frameworkId, limit, offset).all<any>();
   }
@@ -346,7 +346,7 @@ async function updateTask(env: Env, tenantId: string, taskId: string, updates: {
 }
 
 // Project Management functions
-async function getProjects(env: Env, tenantId: string, limit = 50, offset = 0) {
+async function getProjects(env: Env, tenantId: string, limit: string = '50', offset: string = '0') {
   return await env.DB.prepare('SELECT p.*, u.name as manager_name FROM projects p LEFT JOIN users u ON p.manager_user_id = u.id WHERE p.tenant_id = ? ORDER BY p.created_at DESC LIMIT ? OFFSET ?').bind(tenantId, limit, offset).all<any>();
 }
 async function getProjectById(env: Env, tenantId: string, projectId: string) {
@@ -371,6 +371,115 @@ async function updateProject(env: Env, tenantId: string, projectId: string, upda
   const query = `UPDATE projects SET ${fields.join(', ')} WHERE tenant_id = ? AND id = ?`;
   await env.DB.prepare(query).bind(...values, tenantId, projectId).run();
   return true;
+}
+
+// Evidence Management functions
+async function getEvidence(env: Env, tenantId: string, limit: string = '50', offset: string = '0') {
+  return await env.DB.prepare('SELECT e.*, u.name as uploaded_by_name FROM evidence e LEFT JOIN users u ON e.uploaded_by = u.id WHERE e.tenant_id = ? ORDER BY e.created_at DESC LIMIT ? OFFSET ?').bind(tenantId, limit, offset).all<any>();
+}
+async function getEvidenceById(env: Env, tenantId: string, evidenceId: string) {
+  return await env.DB.prepare('SELECT e.*, u.name as uploaded_by_name FROM evidence e LEFT JOIN users u ON e.uploaded_by = u.id WHERE e.tenant_id = ? AND e.id = ?').bind(tenantId, evidenceId).first<any>();
+}
+async function createEvidence(env: Env, tenantId: string, evidence: { name: string; description?: string; fileUrl?: string; fileType?: string; fileSize?: number }, uploadedBy: string) {
+  const id = crypto.randomUUID();
+  await env.DB.prepare('INSERT INTO evidence(id, tenant_id, name, description, file_url, file_type, file_size, uploaded_by) VALUES(?, ?, ?, ?, ?, ?, ?, ?)').bind(id, tenantId, evidence.name, evidence.description || '', evidence.fileUrl || null, evidence.fileType || null, evidence.fileSize || null, uploadedBy).run();
+  return { id };
+}
+async function updateEvidence(env: Env, tenantId: string, evidenceId: string, updates: { name?: string; description?: string; fileUrl?: string; fileType?: string; fileSize?: number }) {
+  const fields = [];
+  const values = [];
+  if (updates.name !== undefined) { fields.push('name = ?'); values.push(updates.name); }
+  if (updates.description !== undefined) { fields.push('description = ?'); values.push(updates.description); }
+  if (updates.fileUrl !== undefined) { fields.push('file_url = ?'); values.push(updates.fileUrl); }
+  if (updates.fileType !== undefined) { fields.push('file_type = ?'); values.push(updates.fileType); }
+  if (updates.fileSize !== undefined) { fields.push('file_size = ?'); values.push(updates.fileSize); }
+  if (fields.length === 0) return false;
+  const query = `UPDATE evidence SET ${fields.join(', ')} WHERE tenant_id = ? AND id = ?`;
+  await env.DB.prepare(query).bind(...values, tenantId, evidenceId).run();
+  return true;
+}
+async function attachEvidenceToControl(env: Env, controlId: string, evidenceId: string, attachedBy: string) {
+  const id = crypto.randomUUID();
+  await env.DB.prepare('INSERT OR IGNORE INTO control_evidence(id, control_id, evidence_id, attached_by) VALUES(?, ?, ?, ?)').bind(id, controlId, evidenceId, attachedBy).run();
+  return { id };
+}
+async function getControlEvidence(env: Env, controlId: string) {
+  return await env.DB.prepare('SELECT e.*, ce.attached_at, u.name as attached_by_name FROM control_evidence ce INNER JOIN evidence e ON ce.evidence_id = e.id LEFT JOIN users u ON ce.attached_by = u.id WHERE ce.control_id = ? ORDER BY ce.attached_at DESC').bind(controlId).all<any>();
+}
+
+// Assessment functions
+async function getAssessments(env: Env, tenantId: string, controlId?: string, limit: string = '50', offset: string = '0') {
+  if (controlId) {
+    return await env.DB.prepare('SELECT a.*, c.code as control_code, c.title as control_title, u.name as assessor_name FROM assessments a LEFT JOIN controls c ON a.control_id = c.id LEFT JOIN users u ON a.assessor_user_id = u.id WHERE a.tenant_id = ? AND a.control_id = ? ORDER BY a.created_at DESC LIMIT ? OFFSET ?').bind(tenantId, controlId, limit, offset).all<any>();
+  }
+  return await env.DB.prepare('SELECT a.*, c.code as control_code, c.title as control_title, u.name as assessor_name FROM assessments a LEFT JOIN controls c ON a.control_id = c.id LEFT JOIN users u ON a.assessor_user_id = u.id WHERE a.tenant_id = ? ORDER BY a.created_at DESC LIMIT ? OFFSET ?').bind(tenantId, limit, offset).all<any>();
+}
+async function getAssessmentById(env: Env, tenantId: string, assessmentId: string) {
+  return await env.DB.prepare('SELECT a.*, c.code as control_code, c.title as control_title, u.name as assessor_name FROM assessments a LEFT JOIN controls c ON a.control_id = c.id LEFT JOIN users u ON a.assessor_user_id = u.id WHERE a.tenant_id = ? AND a.id = ?').bind(tenantId, assessmentId).first<any>();
+}
+async function createAssessment(env: Env, tenantId: string, assessment: { controlId: string; assessorUserId?: string; dueDate?: string; notes?: string }) {
+  const id = crypto.randomUUID();
+  await env.DB.prepare('INSERT INTO assessments(id, control_id, tenant_id, assessor_user_id, due_date, notes) VALUES(?, ?, ?, ?, ?, ?)').bind(id, assessment.controlId, tenantId, assessment.assessorUserId || null, assessment.dueDate || null, assessment.notes || '').run();
+  return { id };
+}
+async function updateAssessment(env: Env, tenantId: string, assessmentId: string, updates: { status?: string; result?: string; notes?: string; assessorUserId?: string; assessmentDate?: string }) {
+  const fields = [];
+  const values = [];
+  if (updates.status !== undefined) { fields.push('status = ?'); values.push(updates.status); }
+  if (updates.result !== undefined) { fields.push('result = ?'); values.push(updates.result); }
+  if (updates.notes !== undefined) { fields.push('notes = ?'); values.push(updates.notes); }
+  if (updates.assessorUserId !== undefined) { fields.push('assessor_user_id = ?'); values.push(updates.assessorUserId); }
+  if (updates.assessmentDate !== undefined) { fields.push('assessment_date = ?'); values.push(updates.assessmentDate); }
+  if (fields.length === 0) return false;
+  fields.push('updated_at = (strftime(\'%Y-%m-%dT%H:%M:%fZ\',\'now\'))');
+  const query = `UPDATE assessments SET ${fields.join(', ')} WHERE tenant_id = ? AND id = ?`;
+  await env.DB.prepare(query).bind(...values, tenantId, assessmentId).run();
+  return true;
+}
+
+// Reporting functions
+async function getComplianceReport(env: Env, tenantId: string, frameworkId?: string) {
+  let query = `SELECT 
+      f.name as framework_name,
+      COUNT(c.id) as total_controls,
+      COUNT(CASE WHEN c.status = 'completed' THEN 1 END) as completed_controls,
+      COUNT(CASE WHEN c.status = 'in_progress' THEN 1 END) as in_progress_controls,
+      COUNT(CASE WHEN c.status = 'not_started' THEN 1 END) as not_started_controls,
+      COUNT(CASE WHEN a.result = 'pass' THEN 1 END) as passed_assessments,
+      COUNT(CASE WHEN a.result = 'fail' THEN 1 END) as failed_assessments
+    FROM frameworks f
+    INNER JOIN tenant_frameworks tf ON f.id = tf.framework_id
+    LEFT JOIN controls c ON f.id = c.framework_id AND c.tenant_id = ?
+    LEFT JOIN assessments a ON c.id = a.control_id
+    WHERE tf.tenant_id = ?`;
+  const params = [tenantId, tenantId];
+  
+  if (frameworkId) {
+    query += ' AND f.id = ?';
+    params.push(frameworkId);
+  }
+  
+  query += ' GROUP BY f.id, f.name ORDER BY f.name';
+  
+  return await env.DB.prepare(query).bind(...params).all<any>();
+}
+async function getTaskSummary(env: Env, tenantId: string, userId?: string) {
+  let query = `SELECT 
+      COUNT(*) as total_tasks,
+      COUNT(CASE WHEN status = 'open' THEN 1 END) as open_tasks,
+      COUNT(CASE WHEN status = 'in_progress' THEN 1 END) as in_progress_tasks,
+      COUNT(CASE WHEN status = 'completed' THEN 1 END) as completed_tasks,
+      COUNT(CASE WHEN due_date < date('now') AND status != 'completed' THEN 1 END) as overdue_tasks
+    FROM tasks 
+    WHERE tenant_id = ?`;
+  const params = [tenantId];
+  
+  if (userId) {
+    query += ' AND assigned_to = ?';
+    params.push(userId);
+  }
+  
+  return await env.DB.prepare(query).bind(...params).first<any>();
 }
 
 async function verifyTurnstile(env: Env, token?: string, ip?: string | null) {
@@ -660,7 +769,7 @@ export default {
       const limit = Math.min(parseInt(url.searchParams.get('limit') || '50'), 100);
       const offset = Math.max(parseInt(url.searchParams.get('offset') || '0'), 0);
       
-      const users = await listUsers(env, t.id, limit, offset);
+      const users = await listUsers(env, t.id, limit.toString(), offset.toString());
       const r = json({ users: users.results, count: users.results.length });
       cors(request, r.headers);
       return r;
@@ -787,7 +896,7 @@ export default {
       const limit = Math.min(parseInt(url.searchParams.get('limit') || '50'), 100);
       const offset = Math.max(parseInt(url.searchParams.get('offset') || '0'), 0);
       
-      const users = await listUsers(env, t.id, limit, offset);
+      const users = await listUsers(env, t.id, limit.toString(), offset.toString());
       const r = json({ users: users.results, count: users.results.length });
       cors(request, r.headers);
       return r;
@@ -805,7 +914,7 @@ export default {
       const limit = Math.min(parseInt(url.searchParams.get('limit') || '50'), 100);
       const offset = Math.max(parseInt(url.searchParams.get('offset') || '0'), 0);
       
-      const logs = await getAuditLogs(env, t.id, limit, offset);
+      const logs = await getAuditLogs(env, t.id, limit.toString(), offset.toString());
       const r = json({ logs: logs.results, count: logs.results.length });
       cors(request, r.headers);
       return r;
@@ -885,7 +994,7 @@ export default {
       const limit = Math.min(parseInt(url.searchParams.get('limit') || '50'), 100);
       const offset = Math.max(parseInt(url.searchParams.get('offset') || '0'), 0);
       
-      const controls = await getControls(env, t.id, frameworkId || undefined, limit, offset);
+      const controls = await getControls(env, t.id, frameworkId || undefined, limit.toString(), offset.toString());
       const r = json({ controls: controls.results, count: controls.results.length });
       cors(request, r.headers);
       return r;
@@ -1099,7 +1208,7 @@ export default {
       const limit = Math.min(parseInt(url.searchParams.get('limit') || '50'), 100);
       const offset = Math.max(parseInt(url.searchParams.get('offset') || '0'), 0);
       
-      const projects = await getProjects(env, t.id, limit, offset);
+      const projects = await getProjects(env, t.id, limit.toString(), offset.toString());
       const r = json({ projects: projects.results, count: projects.results.length });
       cors(request, r.headers);
       return r;
@@ -1172,6 +1281,254 @@ export default {
       await createAuditLog(env, t.id, sess.sub, 'project_updated', projectId);
       
       const r = json({ ok: true });
+      cors(request, r.headers);
+      return r;
+    }
+
+    // Evidence Management APIs
+    if (path === '/evidence' && method === 'GET') {
+      const token = getCookie(request, 'c360_session');
+      const sess = await verifySession(env, token);
+      if (!sess) { const r = json({ error: 'unauthorized' }, 401); cors(request, r.headers); return r; }
+      const t = await getTenantBySlug(env, sess.tenant || '');
+      if (!t) { const r = json({ error: 'tenant_not_found' }, 404); cors(request, r.headers); return r; }
+      
+      const url = new URL(request.url);
+      const limit = Math.min(parseInt(url.searchParams.get('limit') || '50'), 100);
+      const offset = Math.max(parseInt(url.searchParams.get('offset') || '0'), 0);
+      
+      const evidence = await getEvidence(env, t.id, limit.toString(), offset.toString());
+      const r = json({ evidence: evidence.results, count: evidence.results.length });
+      cors(request, r.headers);
+      return r;
+    }
+
+    if (path === '/evidence' && method === 'POST') {
+      const token = getCookie(request, 'c360_session');
+      const sess = await verifySession(env, token);
+      if (!sess) { const r = json({ error: 'unauthorized' }, 401); cors(request, r.headers); return r; }
+      const t = await getTenantBySlug(env, sess.tenant || '');
+      if (!t) { const r = json({ error: 'tenant_not_found' }, 404); cors(request, r.headers); return r; }
+      
+      const body = await readJson<{ name?: string; description?: string; fileUrl?: string; fileType?: string; fileSize?: number }>(request);
+      if (!body?.name) { const r = json({ error: 'name_required' }, 400); cors(request, r.headers); return r; }
+      
+      const evidence = await createEvidence(env, t.id, {
+        name: body.name,
+        description: body.description,
+        fileUrl: body.fileUrl,
+        fileType: body.fileType,
+        fileSize: body.fileSize
+      }, sess.sub);
+      
+      await createAuditLog(env, t.id, sess.sub, 'evidence_created', evidence.id, { name: body.name });
+      
+      const r = json({ ok: true, evidence });
+      cors(request, r.headers);
+      return r;
+    }
+
+    if (path.startsWith('/evidence/') && method === 'GET') {
+      const token = getCookie(request, 'c360_session');
+      const sess = await verifySession(env, token);
+      if (!sess) { const r = json({ error: 'unauthorized' }, 401); cors(request, r.headers); return r; }
+      const t = await getTenantBySlug(env, sess.tenant || '');
+      if (!t) { const r = json({ error: 'tenant_not_found' }, 404); cors(request, r.headers); return r; }
+      
+      const evidenceId = path.split('/')[2];
+      if (!evidenceId) { const r = json({ error: 'evidence_id_required' }, 400); cors(request, r.headers); return r; }
+      
+      const evidence = await getEvidenceById(env, t.id, evidenceId);
+      if (!evidence) { const r = json({ error: 'evidence_not_found' }, 404); cors(request, r.headers); return r; }
+      
+      const r = json({ evidence });
+      cors(request, r.headers);
+      return r;
+    }
+
+    if (path.startsWith('/evidence/') && method === 'PUT') {
+      const token = getCookie(request, 'c360_session');
+      const sess = await verifySession(env, token);
+      if (!sess) { const r = json({ error: 'unauthorized' }, 401); cors(request, r.headers); return r; }
+      const t = await getTenantBySlug(env, sess.tenant || '');
+      if (!t) { const r = json({ error: 'tenant_not_found' }, 404); cors(request, r.headers); return r; }
+      
+      const evidenceId = path.split('/')[2];
+      if (!evidenceId) { const r = json({ error: 'evidence_id_required' }, 400); cors(request, r.headers); return r; }
+      
+      const body = await readJson<{ name?: string; description?: string; fileUrl?: string; fileType?: string; fileSize?: number }>(request);
+      if (!body) { const r = json({ error: 'invalid_body' }, 400); cors(request, r.headers); return r; }
+      
+      const updated = await updateEvidence(env, t.id, evidenceId, body);
+      if (!updated) { const r = json({ error: 'evidence_not_found' }, 404); cors(request, r.headers); return r; }
+      
+      await createAuditLog(env, t.id, sess.sub, 'evidence_updated', evidenceId);
+      
+      const r = json({ ok: true });
+      cors(request, r.headers);
+      return r;
+    }
+
+    if (path.startsWith('/evidence/') && path.endsWith('/attach') && method === 'POST') {
+      const token = getCookie(request, 'c360_session');
+      const sess = await verifySession(env, token);
+      if (!sess) { const r = json({ error: 'unauthorized' }, 401); cors(request, r.headers); return r; }
+      const t = await getTenantBySlug(env, sess.tenant || '');
+      if (!t) { const r = json({ error: 'tenant_not_found' }, 404); cors(request, r.headers); return r; }
+      
+      const evidenceId = path.split('/')[2];
+      if (!evidenceId) { const r = json({ error: 'evidence_id_required' }, 400); cors(request, r.headers); return r; }
+      
+      const body = await readJson<{ controlId?: string }>(request);
+      if (!body?.controlId) { const r = json({ error: 'control_id_required' }, 400); cors(request, r.headers); return r; }
+      
+      const attachment = await attachEvidenceToControl(env, body.controlId, evidenceId, sess.sub);
+      await createAuditLog(env, t.id, sess.sub, 'evidence_attached', evidenceId, { controlId: body.controlId });
+      
+      const r = json({ ok: true, attachment });
+      cors(request, r.headers);
+      return r;
+    }
+
+    if (path.startsWith('/controls/') && path.endsWith('/evidence') && method === 'GET') {
+      const token = getCookie(request, 'c360_session');
+      const sess = await verifySession(env, token);
+      if (!sess) { const r = json({ error: 'unauthorized' }, 401); cors(request, r.headers); return r; }
+      const t = await getTenantBySlug(env, sess.tenant || '');
+      if (!t) { const r = json({ error: 'tenant_not_found' }, 404); cors(request, r.headers); return r; }
+      
+      const controlId = path.split('/')[2];
+      if (!controlId) { const r = json({ error: 'control_id_required' }, 400); cors(request, r.headers); return r; }
+      
+      const evidence = await getControlEvidence(env, controlId);
+      const r = json({ evidence: evidence.results });
+      cors(request, r.headers);
+      return r;
+    }
+
+    // Assessment APIs
+    if (path === '/assessments' && method === 'GET') {
+      const token = getCookie(request, 'c360_session');
+      const sess = await verifySession(env, token);
+      if (!sess) { const r = json({ error: 'unauthorized' }, 401); cors(request, r.headers); return r; }
+      const t = await getTenantBySlug(env, sess.tenant || '');
+      if (!t) { const r = json({ error: 'tenant_not_found' }, 404); cors(request, r.headers); return r; }
+      
+      const url = new URL(request.url);
+      const controlId = url.searchParams.get('control') || undefined;
+      const limit = Math.min(parseInt(url.searchParams.get('limit') || '50'), 100);
+      const offset = Math.max(parseInt(url.searchParams.get('offset') || '0'), 0);
+      
+      const assessments = await getAssessments(env, t.id, controlId, limit.toString(), offset.toString());
+      const r = json({ assessments: assessments.results, count: assessments.results.length });
+      cors(request, r.headers);
+      return r;
+    }
+
+    if (path === '/assessments' && method === 'POST') {
+      const token = getCookie(request, 'c360_session');
+      const sess = await verifySession(env, token);
+      if (!sess) { const r = json({ error: 'unauthorized' }, 401); cors(request, r.headers); return r; }
+      const t = await getTenantBySlug(env, sess.tenant || '');
+      if (!t) { const r = json({ error: 'tenant_not_found' }, 404); cors(request, r.headers); return r; }
+      
+      const body = await readJson<{ controlId?: string; assessorUserId?: string; dueDate?: string; notes?: string }>(request);
+      if (!body?.controlId) { const r = json({ error: 'control_id_required' }, 400); cors(request, r.headers); return r; }
+      
+      const assessment = await createAssessment(env, t.id, {
+        controlId: body.controlId,
+        assessorUserId: body.assessorUserId,
+        dueDate: body.dueDate,
+        notes: body.notes
+      });
+      
+      await createAuditLog(env, t.id, sess.sub, 'assessment_created', assessment.id, { controlId: body.controlId });
+      
+      const r = json({ ok: true, assessment });
+      cors(request, r.headers);
+      return r;
+    }
+
+    if (path.startsWith('/assessments/') && method === 'GET') {
+      const token = getCookie(request, 'c360_session');
+      const sess = await verifySession(env, token);
+      if (!sess) { const r = json({ error: 'unauthorized' }, 401); cors(request, r.headers); return r; }
+      const t = await getTenantBySlug(env, sess.tenant || '');
+      if (!t) { const r = json({ error: 'tenant_not_found' }, 404); cors(request, r.headers); return r; }
+      
+      const assessmentId = path.split('/')[2];
+      if (!assessmentId) { const r = json({ error: 'assessment_id_required' }, 400); cors(request, r.headers); return r; }
+      
+      const assessment = await getAssessmentById(env, t.id, assessmentId);
+      if (!assessment) { const r = json({ error: 'assessment_not_found' }, 404); cors(request, r.headers); return r; }
+      
+      const r = json({ assessment });
+      cors(request, r.headers);
+      return r;
+    }
+
+    if (path.startsWith('/assessments/') && method === 'PUT') {
+      const token = getCookie(request, 'c360_session');
+      const sess = await verifySession(env, token);
+      if (!sess) { const r = json({ error: 'unauthorized' }, 401); cors(request, r.headers); return r; }
+      const t = await getTenantBySlug(env, sess.tenant || '');
+      if (!t) { const r = json({ error: 'tenant_not_found' }, 404); cors(request, r.headers); return r; }
+      
+      const assessmentId = path.split('/')[2];
+      if (!assessmentId) { const r = json({ error: 'assessment_id_required' }, 400); cors(request, r.headers); return r; }
+      
+      const body = await readJson<{ status?: string; result?: string; notes?: string; assessorUserId?: string; assessmentDate?: string }>(request);
+      if (!body) { const r = json({ error: 'invalid_body' }, 400); cors(request, r.headers); return r; }
+      
+      // Validate status
+      if (body.status && !['planned', 'in_progress', 'completed', 'failed'].includes(body.status)) {
+        const r = json({ error: 'invalid_status' }, 400); cors(request, r.headers); return r;
+      }
+      
+      // Validate result
+      if (body.result && !['pass', 'fail', 'na', 'partial'].includes(body.result)) {
+        const r = json({ error: 'invalid_result' }, 400); cors(request, r.headers); return r;
+      }
+      
+      const updated = await updateAssessment(env, t.id, assessmentId, body);
+      if (!updated) { const r = json({ error: 'assessment_not_found' }, 404); cors(request, r.headers); return r; }
+      
+      await createAuditLog(env, t.id, sess.sub, 'assessment_updated', assessmentId);
+      
+      const r = json({ ok: true });
+      cors(request, r.headers);
+      return r;
+    }
+
+    // Reporting APIs
+    if (path === '/reports/compliance' && method === 'GET') {
+      const token = getCookie(request, 'c360_session');
+      const sess = await verifySession(env, token);
+      if (!sess) { const r = json({ error: 'unauthorized' }, 401); cors(request, r.headers); return r; }
+      const t = await getTenantBySlug(env, sess.tenant || '');
+      if (!t) { const r = json({ error: 'tenant_not_found' }, 404); cors(request, r.headers); return r; }
+      
+      const url = new URL(request.url);
+      const frameworkId = url.searchParams.get('framework') || undefined;
+      
+      const report = await getComplianceReport(env, t.id, frameworkId);
+      const r = json({ report: report.results });
+      cors(request, r.headers);
+      return r;
+    }
+
+    if (path === '/reports/tasks' && method === 'GET') {
+      const token = getCookie(request, 'c360_session');
+      const sess = await verifySession(env, token);
+      if (!sess) { const r = json({ error: 'unauthorized' }, 401); cors(request, r.headers); return r; }
+      const t = await getTenantBySlug(env, sess.tenant || '');
+      if (!t) { const r = json({ error: 'tenant_not_found' }, 404); cors(request, r.headers); return r; }
+      
+      const url = new URL(request.url);
+      const userId = url.searchParams.get('user') || undefined;
+      
+      const summary = await getTaskSummary(env, t.id, userId);
+      const r = json({ summary });
       cors(request, r.headers);
       return r;
     }
