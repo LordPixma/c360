@@ -2,6 +2,7 @@ import { headers } from 'next/headers';
 import { parseHost, tenantFromHost } from '../../../lib/tenant';
 import { resolveBrand } from '../../../lib/branding';
 import ClientGuard from './protect';
+import DashboardContent from './DashboardContent';
 
 export default function DashboardPage() {
   const hdrs = headers();
@@ -11,10 +12,7 @@ export default function DashboardPage() {
 
   return (
     <ClientGuard>
-      <main style={{ padding: 24, fontFamily: 'system-ui' }}>
-        <h1 style={{ color: brand.primary }}>{brand.logoText} – Dashboard</h1>
-        <p>Welcome{tenant ? ` to ${tenant}` : ''}. This is your dashboard.</p>
-      </main>
+      <DashboardContent brand={brand} tenant={tenant} />
     </ClientGuard>
   );
 }
