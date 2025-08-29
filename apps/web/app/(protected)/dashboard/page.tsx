@@ -8,6 +8,7 @@ import { TaskManagement } from './components/TaskManagement';
 import { QuickActions } from './components/QuickActions';
 import { ProgressVisualization } from './components/ProgressVisualization';
 import { QuickInsights } from './components/QuickInsights';
+import DashboardContent from './DashboardContent';
 
 export default function DashboardPage() {
   const hdrs = headers();
@@ -78,6 +79,7 @@ export default function DashboardPage() {
           <QuickInsights brand={brand} />
         </main>
       </div>
+      <DashboardContent brand={brand} tenant={tenant} />
     </ClientGuard>
   );
 }
