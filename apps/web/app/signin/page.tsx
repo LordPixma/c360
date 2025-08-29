@@ -175,7 +175,7 @@ export default async function SignInPage() {
               </p>
             </div>
             
-            <SignInForm siteKey={siteKey} />
+            <SignInForm siteKey={siteKey} tenant={tenant} />
             
             <div style={{ 
               marginTop: '32px', 
