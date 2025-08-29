@@ -56,6 +56,54 @@ C360 is a cloud-based, multi-tenant compliance management platform that helps or
 - **Trend Analysis**: Track compliance improvements over time
 - **Custom Reports**: Create tailored reports for specific stakeholder needs
 
+## Architecture & Deployment
+
+### **Current Infrastructure**
+- **Backend**: Python Flask application with RESTful API
+- **Templates**: Jinja2 templating engine for dynamic content rendering
+- **Frontend**: Modern JavaScript with Flask-served templates
+- **Database**: Multi-tenant Cloudflare D1 architecture with strict tenant isolation
+- **CDN & Edge**: Cloudflare for global content delivery and performance optimization
+- **Security**: End-to-end encryption, comprehensive audit logging, and Flask-Security integration
+
+### **Technical Stack**
+- **Framework**: Flask (Python 3.9+) 
+- **Template Engine**: Jinja2 for server-side rendering
+- **Database**: Cloudflare D1 (SQLite-based) with multi-tenant architecture
+- **Authentication**: Flask-Login with multi-factor authentication support
+- **API**: RESTful endpoints with Flask-RESTful
+- **Caching**: Cloudflare KV for session management and performance optimization
+- **Hosting**: Cloudflare Workers/Pages with Flask application
+- **CDN**: Cloudflare for global edge caching and DDoS protection
+
+### **Cloudflare Integration**
+- **D1 Database**: Serverless SQLite database with global replication
+- **KV Storage**: Key-value store for caching and session management
+- **Workers**: Serverless compute for API endpoints and business logic
+- **Pages**: Static site hosting with dynamic functionality
+- **SSL/TLS**: Automatic HTTPS with Cloudflare's SSL certificates
+- **Performance**: Edge computing with sub-50ms response times globally
+- **Security**: Web Application Firewall (WAF) and DDoS protection
+- **DNS Management**: Cloudflare DNS for reliable domain resolution
+- **Analytics**: Cloudflare Analytics for traffic insights and performance monitoring
+
+### **Deployment Architecture**
+- **Serverless Flask**: Python Flask application running on Cloudflare Workers
+- **Edge Database**: D1 SQLite databases replicated across Cloudflare's global network
+- **Global Distribution**: Application and data served from 200+ locations worldwide
+- **Zero Cold Starts**: Instant response times with Cloudflare's edge computing
+- **Auto Scaling**: Automatic scaling based on demand without server management
+- **Cost Optimization**: Pay-per-request pricing with generous free tiers
+
+### **Multi-Tenant Database Design**
+- **Tenant Isolation**: Each organization uses separate D1 database instances for complete data isolation
+- **SQLite Benefits**: ACID compliance, reliable transactions, and familiar SQL syntax
+- **Global Replication**: D1 automatically replicates data to edge locations for low latency
+- **Schema Management**: Standardized schema across tenant databases with migration support
+- **Data Security**: Encryption at rest and in transit with tenant-level access controls
+- **Backup & Recovery**: Automated point-in-time recovery with D1's built-in backup system
+- **Scalability**: Each tenant database can scale independently based on organization size
+
 ## Getting Started
 
 ### **For Organizations**
@@ -125,25 +173,6 @@ C360 is a cloud-based, multi-tenant compliance management platform that helps or
 - **Global Accessibility**: Cloud-based platform accessible anywhere
 - **Integration Ready**: Connect with your existing business tools
 
-## Architecture & Deployment
-
-### **Current Infrastructure**
-- **Frontend**: Next.js application on Cloudflare Pages
-- **Backend**: Cloudflare Worker API
-- **Database**: Multi-tenant data architecture with strict isolation
-- **Security**: End-to-end encryption and comprehensive audit logging
-
-### **🚀 Migration to Full-Stack Worker (Available)**
-We offer an enhanced architecture consolidating both frontend and backend into a single Cloudflare Worker:
-
-**Benefits**:
-- 10-30% faster response times
-- Simplified deployment pipeline
-- Unified monitoring and logging
-- Reduced infrastructure complexity
-
-Contact our team to discuss migration options for your deployment.
-
 ## Support & Success
 
 ### **Customer Success**
@@ -205,4 +234,4 @@ Contact our team to set up your organization's tenant and begin your compliance 
 
 📧 **Email**: hello@C360.com  
 🌐 **Website**: www.C360.com  
-📞 **Phone**: 1-800-COMP360
+📞 **Phone**: 1-800-C360
