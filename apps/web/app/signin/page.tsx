@@ -1,65 +1,205 @@
-"use client";
+import { headers } from 'next/headers';
+import { parseHost, tenantFromHost } from '../../lib/tenant';
+import { getBranding } from '../actions/getBranding';
+import { SignInForm } from '../../components/SignInForm';
 
-import { useState } from 'react';
-import { api } from '../../lib/apiClient';
-
-export default function SignInPage() {
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+export default async function SignInPage() {
+  const hdrs = headers();
+  const hostname = parseHost(hdrs.get('host'));
+  const { tenant } = tenantFromHost(hostname);
+  const brand = await getBranding(tenant);
   const siteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
 
-  async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    setError(null);
-    setLoading(true);
-    const form = new FormData(e.currentTarget);
-    const email = String(form.get('email') || '');
-    const password = String(form.get('password') || '');
-    let cfTurnstileToken: string | undefined;
-    try {
-      // Turnstile widget optional in dev
-      // @ts-ignore
-      cfTurnstileToken = typeof turnstile !== 'undefined' ? await new Promise<string>((resolve) => {
-        // @ts-ignore
-        turnstile.render('#cf-turnstile', {
-          sitekey: siteKey,
-          callback: (t: string) => resolve(t)
-        });
-      }) : undefined;
-    } catch {}
+  const containerStyle = {
+    minHeight: '100vh',
+    display: 'grid',
+    gridTemplateColumns: '1fr 1fr',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Oxygen", "Ubuntu", "Cantarell", "Fira Sans", "Droid Sans", "Helvetica Neue", sans-serif',
+  };
 
-    const res = await api('/auth/login', { method: 'POST', body: { email, password, cfTurnstileToken } });
-    setLoading(false);
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      if (data?.error === 'totp_required') {
-        const totp = prompt('Enter your 6-digit TOTP code');
-        if (!totp) { setError('TOTP required'); return; }
-        setLoading(true);
-        const res2 = await api('/auth/login', { method: 'POST', body: { email, password, totp, cfTurnstileToken } });
-        setLoading(false);
-        if (!res2.ok) { setError('Invalid TOTP'); return; }
-        location.href = '/(protected)/dashboard';
-        return;
-      }
-      setError(data?.error || 'Login failed');
-      return;
-    }
-    location.href = '/(protected)/dashboard';
-  }
+  const leftPanelStyle = {
+    background: `linear-gradient(135deg, ${brand.primary}, ${brand.primary}dd)`,
+    color: 'white',
+    padding: '60px 40px',
+    display: 'flex',
+    flexDirection: 'column' as const,
+    justifyContent: 'center',
+    position: 'relative' as const,
+    overflow: 'hidden',
+  };
+
+  const rightPanelStyle = {
+    backgroundColor: 'white',
+    padding: '60px 40px',
+    display: 'flex',
+    flexDirection: 'column' as const,
+    justifyContent: 'center',
+    alignItems: 'center',
+  };
 
   return (
-    <main style={{ padding: 24, fontFamily: 'system-ui' }}>
-      <h1>Sign in</h1>
-      <form onSubmit={onSubmit} style={{ display: 'grid', gap: 12, maxWidth: 360 }}>
-        <input type="email" name="email" placeholder="you@company.com" required />
-        <input type="password" name="password" placeholder="Password" required />
-        <div id="cf-turnstile" />
-        <button type="submit" disabled={loading}>{loading ? 'Signing in…' : 'Sign in'}</button>
-        {error && <p style={{ color: 'crimson' }}>{error}</p>}
-      </form>
-      {/* Turnstile script (no-op if site key not set) */}
-      {siteKey && <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" defer></script>}
-    </main>
+    <>
+      <style dangerouslySetInnerHTML={{
+        __html: `
+          @media (max-width: 768px) {
+            .signin-container {
+              grid-template-columns: 1fr !important;
+              grid-template-rows: auto 1fr !important;
+            }
+            
+            .left-panel {
+              padding: 40px 20px !important;
+              text-align: center;
+            }
+            
+            .right-panel {
+              padding: 40px 20px !important;
+            }
+          }
+          
+          @media (max-width: 480px) {
+            .left-panel {
+              padding: 30px 15px !important;
+            }
+            
+            .right-panel {
+              padding: 30px 15px !important;
+            }
+          }
+        `
+      }} />
+      
+      <div className="signin-container" style={containerStyle}>
+        {/* Left Panel - Branding */}
+        <div className="left-panel" style={leftPanelStyle}>
+          <div style={{ position: 'relative', zIndex: 1 }}>
+            <div style={{ marginBottom: '40px' }}>
+              <h1 style={{ 
+                fontSize: '2.5rem', 
+                fontWeight: '700', 
+                marginBottom: '16px',
+                letterSpacing: '-0.025em',
+                margin: '0 0 16px 0'
+              }}>
+                {brand.logoText}
+              </h1>
+              <div style={{
+                width: '60px',
+                height: '4px',
+                backgroundColor: 'rgba(255, 255, 255, 0.6)',
+                borderRadius: '2px'
+              }} />
+            </div>
+            
+            <div style={{ marginBottom: '40px' }}>
+              <h2 style={{ 
+                fontSize: '1.75rem', 
+                fontWeight: '600', 
+                marginBottom: '20px',
+                lineHeight: '1.3',
+                margin: '0 0 20px 0'
+              }}>
+                Comprehensive Compliance Management
+              </h2>
+              <p style={{ 
+                fontSize: '1.125rem', 
+                opacity: 0.9, 
+                lineHeight: '1.6',
+                marginBottom: '24px',
+                margin: '0 0 24px 0'
+              }}>
+                Streamline your compliance processes with our multi-tenant platform designed for modern organizations.
+              </p>
+            </div>
+            
+            <div style={{ 
+              display: 'flex', 
+              flexDirection: 'column', 
+              gap: '16px',
+              fontSize: '0.95rem',
+              opacity: 0.8
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <div style={{ 
+                  width: '8px', 
+                  height: '8px', 
+                  backgroundColor: 'rgba(255, 255, 255, 0.7)', 
+                  borderRadius: '50%',
+                  flexShrink: 0
+                }} />
+                <span>SOC 2, ISO 27001, GDPR, and more</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <div style={{ 
+                  width: '8px', 
+                  height: '8px', 
+                  backgroundColor: 'rgba(255, 255, 255, 0.7)', 
+                  borderRadius: '50%',
+                  flexShrink: 0
+                }} />
+                <span>Automated workflows and evidence collection</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <div style={{ 
+                  width: '8px', 
+                  height: '8px', 
+                  backgroundColor: 'rgba(255, 255, 255, 0.7)', 
+                  borderRadius: '50%',
+                  flexShrink: 0
+                }} />
+                <span>Enterprise-grade security and audit trails</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        {/* Right Panel - Form */}
+        <div className="right-panel" style={rightPanelStyle}>
+          <div style={{ width: '100%', maxWidth: '400px' }}>
+            <div style={{ marginBottom: '40px', textAlign: 'center' }}>
+              <h2 style={{ 
+                fontSize: '1.875rem', 
+                fontWeight: '700', 
+                color: '#111827',
+                marginBottom: '8px',
+                margin: '0 0 8px 0'
+              }}>
+                Welcome back
+              </h2>
+              <p style={{ 
+                fontSize: '1rem', 
+                color: '#6b7280',
+                margin: 0
+              }}>
+                Sign in to your account to continue
+              </p>
+            </div>
+            
+            <SignInForm siteKey={siteKey} />
+            
+            <div style={{ 
+              marginTop: '32px', 
+              paddingTop: '24px', 
+              borderTop: '1px solid #f3f4f6',
+              textAlign: 'center'
+            }}>
+              <p style={{ fontSize: '0.875rem', color: '#6b7280', margin: 0 }}>
+                Don't have an account?{' '}
+                <a 
+                  href="/signup" 
+                  style={{ 
+                    color: brand.primary, 
+                    textDecoration: 'none',
+                    fontWeight: '500'
+                  }}
+                >
+                  Create account
+                </a>
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </>
   );
 }
