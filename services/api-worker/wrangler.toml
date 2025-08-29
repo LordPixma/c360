@@ -6,3 +6,17 @@ compatibility_date = "2024-11-01"
 
 [observability]
 enabled = true
+
+# Set from environment or `wrangler secret put` in each env
+# [vars]
+# SESSION_SECRET = "dev_secret_change_me"
+# TURNSTILE_SECRET_KEY = "optional"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "c360_dev"
+database_id = "local-c360-dev"
+
+[[queues.producers]]
+queue = "c360-email"
+binding = "EMAIL_QUEUE"
