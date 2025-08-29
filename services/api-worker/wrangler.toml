@@ -11,6 +11,9 @@ enabled = true
 # [vars]
 # SESSION_SECRET = "dev_secret_change_me"
 # TURNSTILE_SECRET_KEY = "optional"
+# M365_CLIENT_ID = "your-m365-app-client-id"
+# M365_CLIENT_SECRET = "your-m365-app-client-secret"  
+# M365_REDIRECT_URI = "https://your-domain.com/auth/m365/callback"
 
 [[d1_databases]]
 binding = "DB"
