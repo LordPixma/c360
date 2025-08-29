@@ -1,0 +1,14 @@
+{
+  "name": "c360",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "services/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "echo \"Select a package to run dev\"",
+    "build": "echo build",
+    "test": "echo test"
+  }
+}
