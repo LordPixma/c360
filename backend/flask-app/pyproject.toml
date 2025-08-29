@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "c360-flask"
+version = "0.1.0"
+description = "C360 Flask backend (local dev or future migration)"
+requires-python = ">=3.9"
+dependencies = [
+  "Flask>=3.0.0",
+  "Flask-Login>=0.6.3",
+  "Flask-SQLAlchemy>=3.1.1",
+  "python-dotenv>=1.0.1"
+]

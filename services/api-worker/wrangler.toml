@@ -1,0 +1,15 @@
+name = "c360-api"
+main = "src/index.ts"
+compatibility_date = "2024-11-01"
+
+[observability]
+enabled = true
+
+[[d1_databases]]
+binding = "DB"
+database_name = "c360_dev"
+database_id = "00000000-0000-0000-0000-000000000000" # TODO: replace with real ID
+
+[[kv_namespaces]]
+binding = "KV"
+id = "00000000000000000000000000000000" # TODO: replace with real KV id
