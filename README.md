@@ -1,10 +1,10 @@
-# Comp360Flow - Multi-Tenant Compliance Management Platform
+# C360 - Multi-Tenant Compliance Management Platform
 
 Streamline your organization's compliance management with our comprehensive SaaS platform designed for modern businesses navigating complex regulatory requirements.
 
-## What is Comp360Flow?
+## What is C360?
 
-Comp360Flow is a cloud-based, multi-tenant compliance management platform that helps organizations maintain continuous compliance across multiple regulatory frameworks. Each organization operates within its own secure tenant, ensuring complete data isolation while benefiting from our comprehensive compliance management tools.
+C360 is a cloud-based, multi-tenant compliance management platform that helps organizations maintain continuous compliance across multiple regulatory frameworks. Each organization operates within its own secure tenant, ensuring complete data isolation while benefiting from our comprehensive compliance management tools.
 
 ## Platform Architecture
 
@@ -16,7 +16,7 @@ Comp360Flow is a cloud-based, multi-tenant compliance management platform that h
 ### **User Management Structure**
 - **Company Administrators**: Each organization designates employee administrators who manage their tenant
 - **Employee Users**: Staff members can sign up and join their company's tenant
-- **Global Administration**: Comp360Flow staff maintain global administrative access across all tenants for support and platform management
+- **Global Administration**: C360 staff maintain global administrative access across all tenants for support and platform management
 
 ## Core Features
 
@@ -203,6 +203,6 @@ Our SaaS pricing is based on the number of users within your organization's tena
 
 Contact our team to set up your organization's tenant and begin your compliance transformation journey.
 
-📧 **Email**: hello@comp360flow.com  
-🌐 **Website**: www.comp360flow.com  
+📧 **Email**: hello@C360.com  
+🌐 **Website**: www.C360.com  
 📞 **Phone**: 1-800-COMP360
