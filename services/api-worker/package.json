@@ -7,11 +7,20 @@
     "dev": "wrangler dev --local",
     "start": "wrangler dev",
     "deploy": "wrangler deploy",
-    "check": "tsc --noEmit"
+    "check": "tsc --noEmit",
+    "test": "vitest run -c vitest.config.ts",
+    "test:watch": "vitest -c vitest.config.ts",
+    "d1:apply": "wrangler d1 migrations apply c360_dev --remote=false",
+    "d1:create": "wrangler d1 create c360_dev",
+    "d1:list": "wrangler d1 migrations list c360_dev",
+    "d1:execute": "wrangler d1 execute c360_dev --file migrations/0001_init.sql && wrangler d1 execute c360_dev --file migrations/0002_indexes.sql"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20240821.0",
+    "miniflare": "^3.20240821.0",
     "typescript": "^5.5.4",
+    "vitest": "^2.0.5",
+    "vitest-environment-miniflare": "^2.14.4",
     "wrangler": "^3.72.0"
   }
 }

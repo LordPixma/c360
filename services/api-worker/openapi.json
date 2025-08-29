@@ -1,0 +1,118 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "C360 API",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/health": {
+      "get": {
+        "summary": "Health check",
+        "responses": {
+          "200": { "description": "OK" }
+        }
+      }
+    },
+    "/tenants": {
+      "get": {
+        "summary": "List tenants",
+        "responses": {
+          "200": {
+            "description": "List of tenants",
+            "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Tenant" } } } }
+          }
+        }
+      },
+      "post": {
+        "summary": "Create tenant",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "properties": { "name": { "type": "string" } }, "required": ["name"] } } }
+        },
+        "responses": { "200": { "description": "Created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Tenant" } } } } }
+      }
+    },
+    "/tenants/{tenantId}": {
+      "get": {
+        "summary": "Get tenant",
+        "parameters": [ { "name": "tenantId", "in": "path", "required": true, "schema": { "type": "string" } } ],
+        "responses": { "200": { "description": "Tenant", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Tenant" } } } }, "404": { "description": "Not found" } }
+      },
+      "patch": {
+        "summary": "Update tenant",
+        "parameters": [ { "name": "tenantId", "in": "path", "required": true, "schema": { "type": "string" } } ],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "name": { "type": "string" } } } } } },
+        "responses": { "200": { "description": "Updated", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Tenant" } } } }, "404": { "description": "Not found" } }
+      },
+      "delete": {
+        "summary": "Delete tenant",
+        "parameters": [ { "name": "tenantId", "in": "path", "required": true, "schema": { "type": "string" } } ],
+        "responses": { "200": { "description": "Deleted" }, "404": { "description": "Not found" } }
+      }
+    },
+    "/tenants/{tenantId}/users": {
+      "get": {
+        "summary": "List users for a tenant",
+        "parameters": [ { "name": "tenantId", "in": "path", "required": true, "schema": { "type": "string" } } ],
+        "responses": { "200": { "description": "List of users", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/User" } } } } } }
+      },
+      "post": {
+        "summary": "Create user",
+        "parameters": [ { "name": "tenantId", "in": "path", "required": true, "schema": { "type": "string" } } ],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "email": { "type": "string" }, "role": { "type": "string" } }, "required": ["email"] } } } },
+        "responses": { "201": { "description": "Created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/User" } } } } }
+      }
+    },
+    "/tenants/{tenantId}/users/{userId}": {
+      "get": {
+        "summary": "Get user",
+        "parameters": [
+          { "name": "tenantId", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "userId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "User", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/User" } } } }, "404": { "description": "Not found" } }
+      },
+      "patch": {
+        "summary": "Update user",
+        "parameters": [
+          { "name": "tenantId", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "userId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "email": { "type": "string" }, "role": { "type": "string" } } } } } },
+        "responses": { "200": { "description": "Updated", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/User" } } } } }
+      },
+      "delete": {
+        "summary": "Delete user",
+        "parameters": [
+          { "name": "tenantId", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "userId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "Deleted" }, "404": { "description": "Not found" } }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Tenant": {
+        "type": "object",
+        "properties": {
+          "tenant_id": { "type": "string" },
+          "name": { "type": "string" },
+          "created_at": { "type": "string", "format": "date-time" }
+        },
+        "required": ["tenant_id", "name"]
+      },
+      "User": {
+        "type": "object",
+        "properties": {
+          "user_id": { "type": "string" },
+          "tenant_id": { "type": "string" },
+          "email": { "type": "string" },
+          "role": { "type": "string" },
+          "created_at": { "type": "string", "format": "date-time" }
+        },
+        "required": ["user_id", "tenant_id", "email", "role"]
+      }
+    }
+  }
+}
