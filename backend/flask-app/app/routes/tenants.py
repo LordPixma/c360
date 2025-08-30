@@ -90,7 +90,7 @@ def create_user(tenant_id: str):
     if role not in {"admin", "member"}:
         abort(400, description="invalid role")
     # Ensure tenant exists
-    if not Tenant.query.get(tenant_id):
+    if not db.session.get(Tenant, tenant_id):
         abort(404)
     user = User(user_id=str(uuid.uuid4()), tenant_id=tenant_id, email=email, role=role)
     try:

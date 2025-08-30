@@ -2,19 +2,23 @@
 export interface Env {
   DB: D1Database;
   KV: KVNamespace;
+  CORS_ORIGIN?: string; // single allowed origin (legacy)
+  CORS_ORIGINS?: string; // comma-separated list of allowed origins
+  API_TOKEN?: string; // optional bearer token
 }
 // Import OpenAPI spec so it's bundled
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore - JSON import for CF Worker bundling
 import openapi from '../openapi.json';
 
-const CORS_ORIGIN = '*'; // TODO: tighten per environment
+const CORS_ORIGIN = '*'; // default
 
-const withCors = (headers: Record<string, string> = {}, origin: string = CORS_ORIGIN) => ({
+const withCors = (headers: Record<string, string> = {}, origin: string = CORS_ORIGIN, varyOrigin = false) => ({
   'access-control-allow-origin': origin,
   'access-control-allow-methods': 'GET,POST,PATCH,DELETE,OPTIONS',
   'access-control-allow-headers': 'content-type,authorization',
   'access-control-max-age': '86400',
+  ...(varyOrigin && origin !== '*' ? { 'vary': 'origin' } : {}),
   ...headers
 });
 
@@ -59,16 +63,49 @@ const isEmail = (s: string) => emailRegex.test(s);
 export default {
   async fetch(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
     const { url, path, method } = route(request);
-    const corsOrigin = (env as any).CORS_ORIGIN || CORS_ORIGIN;
+    // Determine CORS origin based on env allowlist
+    const originsList = (env.CORS_ORIGINS || '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const singleOrigin = env.CORS_ORIGIN;
+    const originHeader = request.headers.get('origin') || undefined;
+    let resolvedOrigin = '*';
+    let vary = false;
+    if (originsList.length > 0) {
+      if (originHeader && originsList.includes(originHeader)) {
+        resolvedOrigin = originHeader;
+        vary = true;
+      } else {
+        resolvedOrigin = 'null';
+        vary = true;
+      }
+    } else if (singleOrigin) {
+      resolvedOrigin = singleOrigin;
+      vary = true;
+    }
+    const corsOrigin = resolvedOrigin;
     const json = (data: unknown, status = 200): Response =>
-      new Response(JSON.stringify(data), { status, headers: withCors({ 'content-type': 'application/json' }, corsOrigin) });
+      new Response(JSON.stringify(data), { status, headers: withCors({ 'content-type': 'application/json' }, corsOrigin, vary) });
     const notFound = () => json(errorEnvelope('not_found', 'Not Found'), 404);
     const badRequest = (message = 'Bad Request') => json(errorEnvelope('bad_request', message), 400);
     const serverError = (message = 'Internal Server Error') => json(errorEnvelope('server_error', message), 500);
+    const unauthorized = () => json(errorEnvelope('unauthorized', 'Unauthorized'), 401);
 
     // CORS preflight
     if (method === 'OPTIONS') {
-  return new Response(null, { status: 204, headers: withCors({}, corsOrigin) });
+  return new Response(null, { status: 204, headers: withCors({}, corsOrigin, vary) });
+    }
+
+    // Optional Bearer auth for all non-public routes
+    const isPublic = path === '/health' || (path === '/openapi.json' && method === 'GET') || (path === '/docs' && method === 'GET');
+    const tokenRequired = env.API_TOKEN;
+    if (!isPublic && tokenRequired) {
+      const auth = request.headers.get('authorization') || '';
+      const pref = 'bearer ';
+      if (!auth.toLowerCase().startsWith(pref)) return unauthorized();
+      const provided = auth.substring(pref.length);
+      if (provided !== tokenRequired) return unauthorized();
     }
 
     // Health

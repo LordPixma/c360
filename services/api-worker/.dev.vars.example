@@ -1,0 +1,6 @@
+# Copy to .dev.vars (do not commit .dev.vars) for local wrangler dev
+# Local CORS origin for your frontend
+CORS_ORIGIN="http://localhost:5173"
+
+# Optional: require Bearer token locally
+# API_TOKEN="local-dev-token"

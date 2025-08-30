@@ -4,6 +4,7 @@
     "title": "C360 API",
     "version": "0.1.0"
   },
+  "security": [ { "BearerAuth": [] } ],
   "paths": {
     "/health": {
       "get": {
@@ -133,6 +134,13 @@
           }
         },
         "required": ["error"]
+      }
+    },
+    "securitySchemes": {
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
       }
     }
   }
