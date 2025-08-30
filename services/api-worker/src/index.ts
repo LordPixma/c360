@@ -5,6 +5,9 @@ export interface Env {
   CORS_ORIGIN?: string; // single allowed origin (legacy)
   CORS_ORIGINS?: string; // comma-separated list of allowed origins
   API_TOKEN?: string; // optional bearer token
+  RL_WINDOW_SECONDS?: string; // e.g., "60"
+  RL_MAX_REQUESTS?: string;   // default for unauthenticated/public
+  RL_MAX_REQUESTS_AUTH?: string; // for authenticated (API token/key)
 }
 // Import OpenAPI spec so it's bundled
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
@@ -18,6 +21,7 @@ const withCors = (headers: Record<string, string> = {}, origin: string = CORS_OR
   'access-control-allow-methods': 'GET,POST,PATCH,DELETE,OPTIONS',
   'access-control-allow-headers': 'content-type,authorization',
   'access-control-max-age': '86400',
+  'access-control-expose-headers': 'x-ratelimit-limit,x-ratelimit-remaining,x-ratelimit-reset',
   ...(varyOrigin && origin !== '*' ? { 'vary': 'origin' } : {}),
   ...headers
 });
@@ -60,6 +64,46 @@ const allowedRoles = new Set(['admin', 'member']);
 const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const isEmail = (s: string) => emailRegex.test(s);
 
+// Utility: format a byte array to hex
+const toHex = (buffer: ArrayBuffer): string => Array.from(new Uint8Array(buffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+
+// Compute SHA-256 hex digest of a string
+async function sha256Hex(input: string): Promise<string> {
+  const data = new TextEncoder().encode(input);
+  const digest = await crypto.subtle.digest('SHA-256', data);
+  return toHex(digest);
+}
+
+type AuthContext = {
+  admin: boolean;
+  tenantId?: string; // when using per-tenant API key
+  actor: string; // identifier for rate-limiting (e.g., ip:..., api:<hash>, admin)
+};
+
+// Rate limiting using KV (fixed window)
+async function checkRateLimit(env: Env, actor: string, isAuth: boolean): Promise<{ ok: boolean; headers: Record<string, string>; }>{
+  const windowSec = Math.max(1, Number(env.RL_WINDOW_SECONDS ?? '60') || 60);
+  const maxPublic = Math.max(1, Number(env.RL_MAX_REQUESTS ?? '60') || 60);
+  const maxAuth = Math.max(1, Number(env.RL_MAX_REQUESTS_AUTH ?? '600') || 600);
+  const limit = isAuth ? maxAuth : maxPublic;
+  const now = Math.floor(Date.now() / 1000);
+  const windowId = Math.floor(now / windowSec);
+  const key = `rl:${actor}:${windowId}`;
+  const existing = await env.KV.get(key);
+  let count = existing ? Number(existing) || 0 : 0;
+  count += 1;
+  const ttl = windowSec + 5; // small buffer
+  await env.KV.put(key, String(count), { expirationTtl: ttl });
+  const remaining = Math.max(0, limit - count);
+  const reset = (windowId + 1) * windowSec; // epoch seconds when window resets
+  const headers: Record<string, string> = {
+    'x-ratelimit-limit': String(limit),
+    'x-ratelimit-remaining': String(Math.max(0, remaining)),
+    'x-ratelimit-reset': String(reset)
+  };
+  return { ok: count <= limit, headers };
+}
+
 export default {
   async fetch(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
     const { url, path, method } = route(request);
@@ -85,35 +129,57 @@ export default {
       vary = true;
     }
     const corsOrigin = resolvedOrigin;
-    const json = (data: unknown, status = 200): Response =>
-      new Response(JSON.stringify(data), { status, headers: withCors({ 'content-type': 'application/json' }, corsOrigin, vary) });
-    const notFound = () => json(errorEnvelope('not_found', 'Not Found'), 404);
-    const badRequest = (message = 'Bad Request') => json(errorEnvelope('bad_request', message), 400);
-    const serverError = (message = 'Internal Server Error') => json(errorEnvelope('server_error', message), 500);
-    const unauthorized = () => json(errorEnvelope('unauthorized', 'Unauthorized'), 401);
+    let extraHeaders: Record<string, string> = {};
+    const send = (data: unknown, status = 200): Response =>
+      new Response(JSON.stringify(data), { status, headers: withCors({ 'content-type': 'application/json', ...extraHeaders }, corsOrigin, vary) });
+    const notFound = () => send(errorEnvelope('not_found', 'Not Found'), 404);
+    const badRequest = (message = 'Bad Request') => send(errorEnvelope('bad_request', message), 400);
+    const serverError = (message = 'Internal Server Error') => send(errorEnvelope('server_error', message), 500);
+    const unauthorized = () => send(errorEnvelope('unauthorized', 'Unauthorized'), 401);
 
     // CORS preflight
     if (method === 'OPTIONS') {
   return new Response(null, { status: 204, headers: withCors({}, corsOrigin, vary) });
     }
 
-    // Optional Bearer auth for all non-public routes
+    // Auth: admin bearer token or per-tenant API key
     const isPublic = path === '/health' || (path === '/openapi.json' && method === 'GET') || (path === '/docs' && method === 'GET');
-    const tokenRequired = env.API_TOKEN;
-    if (!isPublic && tokenRequired) {
-      const auth = request.headers.get('authorization') || '';
+    const headerAuth = request.headers.get('authorization') || '';
+    let authCtx: AuthContext = { admin: false, actor: '' };
+    const ip = request.headers.get('cf-connecting-ip') || request.headers.get('x-forwarded-for') || 'unknown';
+    if (isPublic) {
+      authCtx = { admin: false, actor: `ip:${ip}` };
+    } else {
       const pref = 'bearer ';
-      if (!auth.toLowerCase().startsWith(pref)) return unauthorized();
-      const provided = auth.substring(pref.length);
-      if (provided !== tokenRequired) return unauthorized();
+      if (!headerAuth.toLowerCase().startsWith(pref)) return unauthorized();
+      const secret = headerAuth.substring(pref.length);
+      if (env.API_TOKEN && secret === env.API_TOKEN) {
+        authCtx = { admin: true, actor: 'admin' };
+      } else {
+        const mkey = /^t_([a-z0-9-]{8,})\.(.+)$/i.exec(secret);
+        if (!mkey) return unauthorized();
+        const tenantId = mkey[1];
+        const keyPlain = mkey[2];
+        const keyHash = await sha256Hex(keyPlain);
+        const found = await env.DB.prepare('SELECT tenant_id FROM tenant_api_keys WHERE tenant_id = ?1 AND key_hash = ?2 AND active = 1')
+          .bind(tenantId, keyHash)
+          .first<{ tenant_id: string }>();
+        if (!found) return unauthorized();
+        authCtx = { admin: false, tenantId, actor: `api:${keyHash.slice(0,16)}` };
+      }
     }
 
+    // Rate limit
+    const { ok: allowed, headers: rl } = await checkRateLimit(env, authCtx.actor || `ip:${ip}`, !isPublic);
+    extraHeaders = { ...extraHeaders, ...rl };
+    if (!allowed) return send(errorEnvelope('forbidden', 'Rate limit exceeded'), 429);
+
     // Health
-    if (path === '/health') return json({ status: 'ok', service: 'c360-api' });
+  if (path === '/health') return send({ status: 'ok', service: 'c360-api' });
 
     // OpenAPI
     if (path === '/openapi.json' && method === 'GET') {
-      return json(openapi);
+  return send(openapi);
     }
 
     // API Docs (Redoc)
@@ -134,7 +200,7 @@ export default {
     <script src="https://cdn.jsdelivr.net/npm/redoc@next/bundles/redoc.standalone.js"></script>
   </body>
 </html>`;
-  return new Response(html, { status: 200, headers: withCors({ 'content-type': 'text/html; charset=utf-8' }, corsOrigin) });
+  return new Response(html, { status: 200, headers: withCors({ 'content-type': 'text/html; charset=utf-8', ...extraHeaders }, corsOrigin) });
     }
 
     // Tenants: list
@@ -149,7 +215,7 @@ export default {
         )
           .bind(limit, offset)
           .all();
-        return json(results ?? []);
+  return send(results ?? []);
       } catch (e: any) {
         return serverError(e?.message);
       }
@@ -169,7 +235,7 @@ export default {
         )
           .bind(id)
           .all();
-        return json(results?.[0] ?? { tenant_id: id, name: body.name });
+  return send(results?.[0] ?? { tenant_id: id, name: body.name });
       } catch (e: any) {
         return serverError(e?.message);
       }
@@ -186,7 +252,7 @@ export default {
             .bind(m[1])
             .all();
           if (!results || results.length === 0) return notFound();
-          return json(results[0]);
+          return send(results[0]);
         } catch (e: any) {
           return serverError(e?.message);
         }
@@ -206,7 +272,7 @@ export default {
           )
             .bind(m[1])
             .all();
-          return json(results?.[0] ?? { tenant_id: m[1], name: body.name });
+          return send(results?.[0] ?? { tenant_id: m[1], name: body.name });
         } catch (e: any) {
           return serverError(e?.message);
         }
@@ -219,7 +285,7 @@ export default {
             .bind(m[1])
             .run();
           if (res.meta.changes === 0) return notFound();
-          return json({ deleted: true });
+          return send({ deleted: true });
         } catch (e: any) {
           return serverError(e?.message);
         }
@@ -240,7 +306,7 @@ export default {
           )
             .bind(m[1], limit, offset)
             .all();
-          return json(results ?? []);
+          return send(results ?? []);
         } catch (e: any) {
           return serverError(e?.message);
         }
@@ -263,7 +329,7 @@ export default {
           )
             .bind(userId)
             .all();
-          return json(results?.[0] ?? { user_id: userId, tenant_id: m[1], email: body.email, role });
+          return send(results?.[0] ?? { user_id: userId, tenant_id: m[1], email: body.email, role });
         } catch (e: any) {
           return serverError(e?.message);
         }
@@ -279,7 +345,7 @@ export default {
             .bind(mu[1], mu[2])
             .all();
           if (!results || results.length === 0) return notFound();
-          return json(results[0]);
+          return send(results[0]);
         } catch (e: any) {
           return serverError(e?.message);
         }
@@ -301,7 +367,7 @@ export default {
           )
             .bind(mu[1], mu[2])
             .all();
-          return json(results?.[0] ?? { user_id: mu[2], tenant_id: mu[1], ...body });
+          return send(results?.[0] ?? { user_id: mu[2], tenant_id: mu[1], ...body });
         } catch (e: any) {
           return serverError(e?.message);
         }
@@ -314,9 +380,58 @@ export default {
             .bind(mu[1], mu[2])
             .run();
           if (res.meta.changes === 0) return notFound();
-          return json({ deleted: true });
+          return send({ deleted: true });
         } catch (e: any) {
           return serverError(e?.message);
+        }
+      }
+    }
+
+    // Admin-only API key management
+    if (!isPublic && (authCtx?.admin === true)) {
+      // Create new key for tenant
+      if (path === '/apikeys' && method === 'POST') {
+        const body = await readJson<{ tenant_id?: string }>(request);
+        if (!body?.tenant_id) return badRequest('tenant_id is required');
+        const raw = crypto.randomUUID().replace(/-/g, '') + crypto.randomUUID().replace(/-/g, '');
+        const keyHash = await sha256Hex(raw);
+        try {
+          await env.DB.prepare('INSERT INTO tenant_api_keys (tenant_id, key_hash, active, created_at) VALUES (?1, ?2, 1, datetime("now"))')
+            .bind(body.tenant_id, keyHash)
+            .run();
+          const apiKey = `t_${body.tenant_id}.${raw}`;
+          return send({ api_key: apiKey }, 201);
+        } catch (e: any) {
+          return serverError(e?.message);
+        }
+      }
+      // List keys for tenant
+      {
+        const mk = match(path, /^\/apikeys\/([a-zA-Z0-9-]+)$/);
+        if (mk && method === 'GET') {
+          try {
+            const { results } = await env.DB.prepare('SELECT key_id, tenant_id, active, created_at FROM tenant_api_keys WHERE tenant_id = ?1 ORDER BY created_at DESC')
+              .bind(mk[1])
+              .all();
+            return send(results ?? []);
+          } catch (e: any) {
+            return serverError(e?.message);
+          }
+        }
+      }
+      // Revoke key by id
+      {
+        const mkd = match(path, /^\/apikeys\/([a-zA-Z0-9-]+)\/([0-9]+)$/);
+        if (mkd && method === 'DELETE') {
+          try {
+            const res = await env.DB.prepare('UPDATE tenant_api_keys SET active = 0 WHERE tenant_id = ?1 AND key_id = ?2')
+              .bind(mkd[1], Number(mkd[2]))
+              .run();
+            if (res.meta.changes === 0) return notFound();
+            return send({ revoked: true });
+          } catch (e: any) {
+            return serverError(e?.message);
+          }
         }
       }
     }
