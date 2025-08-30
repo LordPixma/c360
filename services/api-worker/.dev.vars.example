@@ -2,5 +2,4 @@
 # Local CORS origin for your frontend
 CORS_ORIGIN="http://localhost:5173"
 
-# Optional: require Bearer token locally
-# API_TOKEN="local-dev-token"
+# Secrets such as API_TOKEN should be set with `wrangler secret put` and not stored here.
