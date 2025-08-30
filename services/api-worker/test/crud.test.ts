@@ -2,16 +2,25 @@ import { describe, it, expect } from 'vitest';
 import worker from '../src/index';
 import { MockD1 } from './utils/mockD1';
 
-const make = (path: string, init?: RequestInit) => new Request(`http://localhost${path}`, init);
+const make = (path: string, init: RequestInit = {}) => {
+  const headers = new Headers(init.headers || {});
+  headers.set('authorization', 'Bearer admin');
+  return new Request(`http://localhost${path}`, { ...init, headers });
+};
 
 describe('tenants and users CRUD', () => {
   it('tenant CRUD happy path', async () => {
-    const env: any = { DB: new MockD1(), KV: new Map() };
+    const kv: any = {
+      store: new Map<string, string>(),
+      async get(key: string) { return this.store.get(key) ?? null; },
+      async put(key: string, value: string) { this.store.set(key, value); }
+    };
+    const env: any = { DB: new MockD1(), KV: kv, API_TOKEN: 'admin' };
 
     // list empty
     let res = await worker.fetch(make('/tenants'), env, {} as any);
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual([]);
+    expect(await res.json() as any).toEqual([]);
 
     // create
     res = await worker.fetch(make('/tenants', { method: 'POST', body: JSON.stringify({ name: 'Acme' }), headers: { 'content-type': 'application/json' } }), env, {} as any);
@@ -44,7 +53,12 @@ describe('tenants and users CRUD', () => {
   });
 
   it('user CRUD under tenant', async () => {
-    const env: any = { DB: new MockD1(), KV: new Map() };
+    const kv2: any = {
+      store: new Map<string, string>(),
+      async get(key: string) { return this.store.get(key) ?? null; },
+      async put(key: string, value: string) { this.store.set(key, value); }
+    };
+    const env: any = { DB: new MockD1(), KV: kv2, API_TOKEN: 'admin' };
 
     // create tenant
     let res = await worker.fetch(make('/tenants', { method: 'POST', body: JSON.stringify({ name: 'T' }), headers: { 'content-type': 'application/json' } }), env, {} as any);
@@ -54,7 +68,7 @@ describe('tenants and users CRUD', () => {
     // list empty
     res = await worker.fetch(make(`/tenants/${tid}/users`), env, {} as any);
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual([]);
+    expect(await res.json() as any).toEqual([]);
 
     // create user
   // invalid email
@@ -99,7 +113,12 @@ describe('tenants and users CRUD', () => {
   });
 
   it('returns 400/404 appropriately', async () => {
-    const env: any = { DB: new MockD1(), KV: new Map() };
+    const kv3: any = {
+      store: new Map<string, string>(),
+      async get(key: string) { return this.store.get(key) ?? null; },
+      async put(key: string, value: string) { this.store.set(key, value); }
+    };
+    const env: any = { DB: new MockD1(), KV: kv3, API_TOKEN: 'admin' };
 
     // POST tenant without body
     let res = await worker.fetch(make('/tenants', { method: 'POST', body: '{}', headers: { 'content-type': 'application/json' } }), env, {} as any);
