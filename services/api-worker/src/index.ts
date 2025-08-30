@@ -8,11 +8,12 @@ export interface Env {
   RL_WINDOW_SECONDS?: string; // e.g., "60"
   RL_MAX_REQUESTS?: string;   // default for unauthenticated/public
   RL_MAX_REQUESTS_AUTH?: string; // for authenticated (API token/key)
-  DEV_LOGIN_ENABLED?: string; // "true" to enable /auth/login for local/dev only
+  JWT_SECRET?: string; // secret for JWT signing
 }
 // Import OpenAPI spec so it's bundled
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore - JSON import for CF Worker bundling
+import bcrypt from 'bcryptjs';
 import openapi from '../openapi.json';
 
 const CORS_ORIGIN = '*'; // default
@@ -75,10 +76,65 @@ async function sha256Hex(input: string): Promise<string> {
   return toHex(digest);
 }
 
+// Password hashing using bcrypt
+async function hashPassword(password: string): Promise<{ hash: string; salt: string }> {
+  const salt = bcrypt.genSaltSync(10);
+  const hash = bcrypt.hashSync(password, salt);
+  return { hash, salt };
+}
+
+async function verifyPassword(password: string, hash: string): Promise<boolean> {
+  return bcrypt.compareSync(password, hash);
+}
+
+// Minimal JWT implementation (HS256)
+function base64UrlEncode(buffer: ArrayBuffer | Uint8Array): string {
+  const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+  let binary = '';
+  for (const b of bytes) binary += String.fromCharCode(b);
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+/g, '');
+}
+
+function base64UrlDecode(str: string): Uint8Array {
+  str = str.replace(/-/g, '+').replace(/_/g, '/');
+  const pad = str.length % 4;
+  if (pad) str += '='.repeat(4 - pad);
+  const binary = atob(str);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+async function signJwt(payload: Record<string, any>, secret: string): Promise<string> {
+  const header = { alg: 'HS256', typ: 'JWT' };
+  const enc = (obj: any) => base64UrlEncode(new TextEncoder().encode(JSON.stringify(obj)));
+  const h = enc(header);
+  const p = enc(payload);
+  const data = `${h}.${p}`;
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const signature = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(data));
+  const s = base64UrlEncode(signature);
+  return `${data}.${s}`;
+}
+
+async function verifyJwt(token: string, secret: string): Promise<Record<string, any> | null> {
+  const parts = token.split('.');
+  if (parts.length !== 3) return null;
+  const [h, p, s] = parts;
+  const data = `${h}.${p}`;
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['verify']);
+  const valid = await crypto.subtle.verify('HMAC', key, base64UrlDecode(s).buffer as ArrayBuffer, new TextEncoder().encode(data));
+  if (!valid) return null;
+  const payload = JSON.parse(new TextDecoder().decode(base64UrlDecode(p)));
+  if (payload.exp && Date.now() / 1000 > payload.exp) return null;
+  return payload;
+}
+
 type AuthContext = {
   admin: boolean;
-  tenantId?: string; // when using per-tenant API key
-  actor: string; // identifier for rate-limiting (e.g., ip:..., api:<hash>, admin)
+  tenantId?: string; // tenant from API key or JWT
+  userId?: string; // when using user JWT
+  actor: string; // identifier for rate-limiting (e.g., ip:..., api:<hash>, admin, user:<id>)
 };
 
 // Rate limiting using KV (fixed window)
@@ -158,15 +214,22 @@ export default {
         authCtx = { admin: true, actor: 'admin' };
       } else {
         const mkey = /^t_([a-z0-9-]{8,})\.(.+)$/i.exec(secret);
-        if (!mkey) return unauthorized();
-        const tenantId = mkey[1];
-        const keyPlain = mkey[2];
-        const keyHash = await sha256Hex(keyPlain);
-        const found = await env.DB.prepare('SELECT tenant_id FROM tenant_api_keys WHERE tenant_id = ?1 AND key_hash = ?2 AND active = 1')
-          .bind(tenantId, keyHash)
-          .first<{ tenant_id: string }>();
-        if (!found) return unauthorized();
-        authCtx = { admin: false, tenantId, actor: `api:${keyHash.slice(0,16)}` };
+        if (mkey) {
+          const tenantId = mkey[1];
+          const keyPlain = mkey[2];
+          const keyHash = await sha256Hex(keyPlain);
+          const found = await env.DB.prepare('SELECT tenant_id FROM tenant_api_keys WHERE tenant_id = ?1 AND key_hash = ?2 AND active = 1')
+            .bind(tenantId, keyHash)
+            .first<{ tenant_id: string }>();
+          if (!found) return unauthorized();
+          authCtx = { admin: false, tenantId, actor: `api:${keyHash.slice(0,16)}` };
+        } else if (env.JWT_SECRET) {
+          const jwt = await verifyJwt(secret, env.JWT_SECRET);
+          if (!jwt) return unauthorized();
+          authCtx = { admin: false, tenantId: jwt.tenant_id, userId: jwt.sub, actor: `user:${jwt.sub}` };
+        } else {
+          return unauthorized();
+        }
       }
     }
 
@@ -177,63 +240,22 @@ export default {
 
     // Health
   if (path === '/health') return send({ status: 'ok', service: 'c360-api' });
-    // Development-only auth: exchange email/password for a tenant API key
+    // User login, returns JWT
     if (path === '/auth/login' && method === 'POST') {
       try {
-        if ((env.DEV_LOGIN_ENABLED || '').toLowerCase() !== 'true') {
-          return notFound();
-        }
-        const body = await readJson<{ email?: string; password?: string; tenant_id?: string; }>(request);
+        const body = await readJson<{ email?: string; password?: string }>(request);
         if (!body?.email) return badRequest('email is required');
         if (!isEmail(body.email)) return badRequest('invalid email');
-        if (!body?.password || body.password.length < 8) return badRequest('invalid password');
-
-        // Resolve tenant
-        let tenantId = body.tenant_id;
-        let tenantName: string | undefined;
-        if (tenantId) {
-          const found = await env.DB.prepare('SELECT tenant_id, name, created_at FROM tenants WHERE tenant_id = ?1')
-            .bind(tenantId)
-            .first<{ tenant_id: string; name: string; created_at: string }>();
-          if (!found) return badRequest('tenant not found');
-          tenantName = found.name;
-        } else {
-          // Create a dev tenant if none provided
-          tenantId = crypto.randomUUID();
-          tenantName = `Dev Tenant (${body.email})`;
-          await env.DB.prepare('INSERT INTO tenants (tenant_id, name) VALUES (?1, ?2)')
-            .bind(tenantId, tenantName)
-            .run();
-        }
-
-        // Upsert user within tenant
-        let user = await env.DB.prepare('SELECT user_id, tenant_id, email, role, created_at FROM users WHERE tenant_id = ?1 AND email = ?2')
-          .bind(tenantId, body.email)
-          .first<{ user_id: string; tenant_id: string; email: string; role: string; created_at: string }>();
-        if (!user) {
-          const uid = crypto.randomUUID();
-          await env.DB.prepare('INSERT INTO users (user_id, tenant_id, email, role) VALUES (?1, ?2, ?3, ?4)')
-            .bind(uid, tenantId, body.email, 'member')
-            .run();
-          user = await env.DB.prepare('SELECT user_id, tenant_id, email, role, created_at FROM users WHERE user_id = ?1')
-            .bind(uid)
-            .first<{ user_id: string; tenant_id: string; email: string; role: string; created_at: string }>();
-        }
-
-        // Issue a tenant API key
-        const raw = crypto.randomUUID().replace(/-/g, '') + crypto.randomUUID().replace(/-/g, '');
-        const keyHash = await sha256Hex(raw);
-        await env.DB.prepare('INSERT INTO tenant_api_keys (tenant_id, key_hash, active, created_at) VALUES (?1, ?2, 1, datetime("now"))')
-          .bind(tenantId, keyHash)
-          .run();
-        const apiKey = `t_${tenantId}.${raw}`;
-
-        return send({
-          api_key: apiKey,
-          tenant_id: tenantId,
-          tenant: tenantName ? { tenant_id: tenantId, name: tenantName } : { tenant_id: tenantId },
-          user
-        }, 200);
+        if (!body?.password) return badRequest('password is required');
+        const user = await env.DB.prepare('SELECT user_id, tenant_id, email, role, password_hash FROM users WHERE email = ?1')
+          .bind(body.email)
+          .first<{ user_id: string; tenant_id: string; email: string; role: string; password_hash: string }>();
+        if (!user) return unauthorized();
+        const ok = await verifyPassword(body.password, user.password_hash);
+        if (!ok) return unauthorized();
+        const payload = { sub: user.user_id, tenant_id: user.tenant_id, role: user.role, exp: Math.floor(Date.now() / 1000) + 3600 };
+        const token = await signJwt(payload, env.JWT_SECRET || '');
+        return send({ token, user: { user_id: user.user_id, tenant_id: user.tenant_id, email: user.email, role: user.role } });
       } catch (e: any) {
         return serverError(e?.message);
       }
@@ -271,6 +293,18 @@ export default {
       try {
         if (authCtx.admin) {
           return send({ admin: true });
+        }
+        if (authCtx.userId) {
+          const user = await env.DB.prepare('SELECT user_id, tenant_id, email, role FROM users WHERE user_id = ?1')
+            .bind(authCtx.userId)
+            .first<{ user_id: string; tenant_id: string; email: string; role: string }>();
+          let tenant: any = undefined;
+          if (user) {
+            tenant = await env.DB.prepare('SELECT tenant_id, name, created_at FROM tenants WHERE tenant_id = ?1')
+              .bind(user.tenant_id)
+              .first<{ tenant_id: string; name: string; created_at: string }>();
+          }
+          return send({ admin: false, user, tenant });
         }
         if (authCtx.tenantId) {
           const t = await env.DB.prepare('SELECT tenant_id, name, created_at FROM tenants WHERE tenant_id = ?1')
@@ -393,17 +427,19 @@ export default {
         }
       }
       if (m && method === 'POST') {
-        const body = await readJson<{ email?: string; role?: string }>(request);
+        const body = await readJson<{ email?: string; role?: string; password?: string }>(request);
         if (!body?.email) return badRequest('email is required');
-  if (!isEmail(body.email)) return badRequest('invalid email');
-  const role = body.role || 'member';
-  if (!allowedRoles.has(role)) return badRequest('invalid role');
+        if (!isEmail(body.email)) return badRequest('invalid email');
+        const role = body.role || 'member';
+        if (!allowedRoles.has(role)) return badRequest('invalid role');
+        if (!body?.password || body.password.length < 8) return badRequest('password must be at least 8 characters');
+        const { hash, salt } = await hashPassword(body.password);
         const userId = crypto.randomUUID();
         try {
           await env.DB.prepare(
-            'INSERT INTO users (user_id, tenant_id, email, role) VALUES (?1, ?2, ?3, ?4)'
+            'INSERT INTO users (user_id, tenant_id, email, role, password_hash, password_salt) VALUES (?1, ?2, ?3, ?4, ?5, ?6)'
           )
-            .bind(userId, m[1], body.email, role)
+            .bind(userId, m[1], body.email, role, hash, salt)
             .run();
           const { results } = await env.DB.prepare(
             'SELECT user_id, tenant_id, email, role, created_at FROM users WHERE user_id = ?1'
