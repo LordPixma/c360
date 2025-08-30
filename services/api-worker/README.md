@@ -15,7 +15,7 @@ Endpoints:
 
 Notes:
 - Use Wrangler D1 migrations to apply SQL in migrations/ to your bound database.
-- Update `wrangler.toml` with real D1 `database_id` and KV `id` before deploy.
+- Wrangler configuration includes production D1 database and KV namespace IDs; update only if infrastructure changes.
 
 Environment variables:
 - CORS_ORIGINS: Comma-separated allowlist of origins. If set, the Worker reflects the request Origin when it matches; otherwise returns `access-control-allow-origin: null`.

@@ -1,5 +1,6 @@
-# Root placeholder. Each Worker/service will define its own wrangler.toml
-# in its respective folder (e.g., services/api-worker/wrangler.toml).
+# Root configuration placeholder for Worker services. Each Worker/service
+# defines its own `wrangler.toml` in its folder (e.g.,
+# `services/api-worker/wrangler.toml`).
 
 # Example snippet for a service-level wrangler.toml:
 # name = "c360-api"
@@ -9,5 +10,5 @@
 # enabled = true
 # [[d1_databases]]
 # binding = "DB"
-# database_name = "c360_dev"
-# database_id = "<uuid>"
+# database_name = "c360_prod"
+# database_id = "3cdf8d89-79b4-42de-83db-5446d97d49e8"
