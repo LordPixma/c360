@@ -1,8 +1,9 @@
-from flask import Blueprint, request
+from flask import Blueprint, request, abort
 import uuid
 from ..extensions import db
 from ..models import Tenant, User
 from sqlalchemy.exc import IntegrityError
+import re
 
 bp = Blueprint("tenants", __name__)
 
@@ -21,7 +22,7 @@ def create_tenant():
     payload = request.get_json(silent=True) or {}
     name = payload.get("name")
     if not name:
-        return {"error": "name is required"}, 400
+        abort(400, description="name is required")
     tenant = Tenant(tenant_id=str(uuid.uuid4()), name=name)
     db.session.add(tenant)
     db.session.commit()
@@ -35,7 +36,7 @@ def create_tenant():
 def get_tenant(tenant_id: str):
     t = Tenant.query.filter_by(tenant_id=tenant_id).first()
     if not t:
-        return {"error": "not found"}, 404
+        abort(404)
     return {"tenant_id": t.tenant_id, "name": t.name, "created_at": t.created_at.isoformat()}
 
 
@@ -43,7 +44,7 @@ def get_tenant(tenant_id: str):
 def update_tenant(tenant_id: str):
     t = Tenant.query.filter_by(tenant_id=tenant_id).first()
     if not t:
-        return {"error": "not found"}, 404
+        abort(404)
     payload = request.get_json(silent=True) or {}
     if "name" in payload and payload["name"]:
         t.name = payload["name"]
@@ -55,7 +56,7 @@ def update_tenant(tenant_id: str):
 def delete_tenant(tenant_id: str):
     t = Tenant.query.filter_by(tenant_id=tenant_id).first()
     if not t:
-        return {"error": "not found"}, 404
+        abort(404)
     db.session.delete(t)
     db.session.commit()
     return {"deleted": True}
@@ -82,10 +83,14 @@ def create_user(tenant_id: str):
     email = payload.get("email")
     role = payload.get("role") or "member"
     if not email:
-        return {"error": "email is required"}, 400
+        abort(400, description="email is required")
+    if not re.match(r"^[^\s@]+@[^\s@]+\.[^\s@]+$", email):
+        abort(400, description="invalid email")
+    if role not in {"admin", "member"}:
+        abort(400, description="invalid role")
     # Ensure tenant exists
     if not Tenant.query.get(tenant_id):
-        return {"error": "tenant not found"}, 404
+        abort(404)
     user = User(user_id=str(uuid.uuid4()), tenant_id=tenant_id, email=email, role=role)
     try:
         db.session.add(user)
@@ -106,7 +111,7 @@ def create_user(tenant_id: str):
 def get_user(tenant_id: str, user_id: str):
     u = User.query.filter_by(tenant_id=tenant_id, user_id=user_id).first()
     if not u:
-        return {"error": "not found"}, 404
+        abort(404)
     return {
         "user_id": u.user_id,
         "tenant_id": u.tenant_id,
@@ -120,12 +125,20 @@ def get_user(tenant_id: str, user_id: str):
 def update_user(tenant_id: str, user_id: str):
     u = User.query.filter_by(tenant_id=tenant_id, user_id=user_id).first()
     if not u:
-        return {"error": "not found"}, 404
+        abort(404)
     payload = request.get_json(silent=True) or {}
-    if "email" in payload and payload["email"]:
-        u.email = payload["email"]
-    if "role" in payload and payload["role"]:
-        u.role = payload["role"]
+    if "email" in payload:
+        email = payload["email"]
+        if email and not re.match(r"^[^\s@]+@[^\s@]+\.[^\s@]+$", email):
+            abort(400, description="invalid email")
+        if email:
+            u.email = email
+    if "role" in payload:
+        role = payload["role"]
+        if role and role not in {"admin", "member"}:
+            abort(400, description="invalid role")
+        if role:
+            u.role = role
     db.session.commit()
     return {
         "user_id": u.user_id,
@@ -140,7 +153,7 @@ def update_user(tenant_id: str, user_id: str):
 def delete_user(tenant_id: str, user_id: str):
     u = User.query.filter_by(tenant_id=tenant_id, user_id=user_id).first()
     if not u:
-        return {"error": "not found"}, 404
+        abort(404)
     db.session.delete(u)
     db.session.commit()
     return {"deleted": True}

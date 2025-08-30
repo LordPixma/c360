@@ -8,15 +8,27 @@ export interface Env {
 // @ts-ignore - JSON import for CF Worker bundling
 import openapi from '../openapi.json';
 
+const CORS_ORIGIN = '*'; // TODO: tighten per environment
+
+const withCors = (headers: Record<string, string> = {}, origin: string = CORS_ORIGIN) => ({
+  'access-control-allow-origin': origin,
+  'access-control-allow-methods': 'GET,POST,PATCH,DELETE,OPTIONS',
+  'access-control-allow-headers': 'content-type,authorization',
+  'access-control-max-age': '86400',
+  ...headers
+});
+
 const json = (data: unknown, status = 200): Response =>
   new Response(JSON.stringify(data), {
     status,
-    headers: { 'content-type': 'application/json' }
+    headers: withCors({ 'content-type': 'application/json' })
   });
 
-const notFound = () => json({ error: 'Not Found' }, 404);
-const badRequest = (message = 'Bad Request') => json({ error: message }, 400);
-const serverError = (message = 'Internal Server Error') => json({ error: message }, 500);
+type ErrorCode = 'not_found' | 'bad_request' | 'server_error' | 'unauthorized' | 'forbidden';
+const errorEnvelope = (code: ErrorCode, message: string) => ({ error: { code, message } });
+const notFound = () => json(errorEnvelope('not_found', 'Not Found'), 404);
+const badRequest = (message = 'Bad Request') => json(errorEnvelope('bad_request', message), 400);
+const serverError = (message = 'Internal Server Error') => json(errorEnvelope('server_error', message), 500);
 
 async function readJson<T = any>(request: Request): Promise<T | null> {
   const ct = request.headers.get('content-type') || '';
@@ -39,9 +51,25 @@ function match(path: string, pattern: RegExp): RegExpExecArray | null {
   return pattern.exec(path);
 }
 
+// Validation helpers
+const allowedRoles = new Set(['admin', 'member']);
+const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const isEmail = (s: string) => emailRegex.test(s);
+
 export default {
   async fetch(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
-    const { path, method } = route(request);
+    const { url, path, method } = route(request);
+    const corsOrigin = (env as any).CORS_ORIGIN || CORS_ORIGIN;
+    const json = (data: unknown, status = 200): Response =>
+      new Response(JSON.stringify(data), { status, headers: withCors({ 'content-type': 'application/json' }, corsOrigin) });
+    const notFound = () => json(errorEnvelope('not_found', 'Not Found'), 404);
+    const badRequest = (message = 'Bad Request') => json(errorEnvelope('bad_request', message), 400);
+    const serverError = (message = 'Internal Server Error') => json(errorEnvelope('server_error', message), 500);
+
+    // CORS preflight
+    if (method === 'OPTIONS') {
+  return new Response(null, { status: 204, headers: withCors({}, corsOrigin) });
+    }
 
     // Health
     if (path === '/health') return json({ status: 'ok', service: 'c360-api' });
@@ -69,15 +97,21 @@ export default {
     <script src="https://cdn.jsdelivr.net/npm/redoc@next/bundles/redoc.standalone.js"></script>
   </body>
 </html>`;
-      return new Response(html, { status: 200, headers: { 'content-type': 'text/html; charset=utf-8' } });
+  return new Response(html, { status: 200, headers: withCors({ 'content-type': 'text/html; charset=utf-8' }, corsOrigin) });
     }
 
     // Tenants: list
     if (path === '/tenants' && method === 'GET') {
       try {
+        const limitParam = url.searchParams.get('limit');
+        const offsetParam = url.searchParams.get('offset');
+        const limit = Math.max(0, Math.min(Number(limitParam ?? 100) || 100, 1000));
+        const offset = Math.max(0, Number(offsetParam ?? 0) || 0);
         const { results } = await env.DB.prepare(
-          'SELECT tenant_id, name, created_at FROM tenants ORDER BY created_at DESC LIMIT 100'
-        ).all();
+          'SELECT tenant_id, name, created_at FROM tenants ORDER BY created_at DESC LIMIT ?1 OFFSET ?2'
+        )
+          .bind(limit, offset)
+          .all();
         return json(results ?? []);
       } catch (e: any) {
         return serverError(e?.message);
@@ -160,10 +194,14 @@ export default {
       const m = match(path, /^\/tenants\/([a-zA-Z0-9-]+)\/users$/);
       if (m && method === 'GET') {
         try {
+          const limitParam = url.searchParams.get('limit');
+          const offsetParam = url.searchParams.get('offset');
+          const limit = Math.max(0, Math.min(Number(limitParam ?? 200) || 200, 1000));
+          const offset = Math.max(0, Number(offsetParam ?? 0) || 0);
           const { results } = await env.DB.prepare(
-            'SELECT user_id, tenant_id, email, role, created_at FROM users WHERE tenant_id = ?1 ORDER BY created_at DESC LIMIT 200'
+            'SELECT user_id, tenant_id, email, role, created_at FROM users WHERE tenant_id = ?1 ORDER BY created_at DESC LIMIT ?2 OFFSET ?3'
           )
-            .bind(m[1])
+            .bind(m[1], limit, offset)
             .all();
           return json(results ?? []);
         } catch (e: any) {
@@ -173,7 +211,9 @@ export default {
       if (m && method === 'POST') {
         const body = await readJson<{ email?: string; role?: string }>(request);
         if (!body?.email) return badRequest('email is required');
-        const role = body.role || 'member';
+  if (!isEmail(body.email)) return badRequest('invalid email');
+  const role = body.role || 'member';
+  if (!allowedRoles.has(role)) return badRequest('invalid role');
         const userId = crypto.randomUUID();
         try {
           await env.DB.prepare(
@@ -210,6 +250,8 @@ export default {
       if (mu && method === 'PATCH') {
         const body = await readJson<{ email?: string; role?: string }>(request);
         if (!body || (body.email == null && body.role == null)) return badRequest('nothing to update');
+  if (body.email != null && !isEmail(body.email)) return badRequest('invalid email');
+  if (body.role != null && !allowedRoles.has(body.role)) return badRequest('invalid role');
         try {
           const res = await env.DB.prepare(
             'UPDATE users SET email = COALESCE(?3, email), role = COALESCE(?4, role) WHERE tenant_id = ?1 AND user_id = ?2'
