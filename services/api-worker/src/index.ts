@@ -9,6 +9,7 @@ export interface Env {
   RL_MAX_REQUESTS?: string;   // default for unauthenticated/public
   RL_MAX_REQUESTS_AUTH?: string; // for authenticated (API token/key)
   DEV_LOGIN_ENABLED?: string; // "true" to enable /auth/login for local/dev only
+  LOG_SINK_URL?: string; // optional external log sink endpoint
 }
 // Import OpenAPI spec so it's bundled
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
@@ -90,11 +91,15 @@ async function checkRateLimit(env: Env, actor: string, isAuth: boolean): Promise
   const now = Math.floor(Date.now() / 1000);
   const windowId = Math.floor(now / windowSec);
   const key = `rl:${actor}:${windowId}`;
-  const existing = await env.KV.get(key);
+  const existing = await (env.KV as any).get(key);
   let count = existing ? Number(existing) || 0 : 0;
   count += 1;
   const ttl = windowSec + 5; // small buffer
-  await env.KV.put(key, String(count), { expirationTtl: ttl });
+  if (typeof (env.KV as any).put === 'function') {
+    await (env.KV as any).put(key, String(count), { expirationTtl: ttl });
+  } else if (typeof (env.KV as any).set === 'function') {
+    (env.KV as any).set(key, String(count));
+  }
   const remaining = Math.max(0, limit - count);
   const reset = (windowId + 1) * windowSec; // epoch seconds when window resets
   const headers: Record<string, string> = {
@@ -106,8 +111,19 @@ async function checkRateLimit(env: Env, actor: string, isAuth: boolean): Promise
 }
 
 export default {
-  async fetch(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const { url, path, method } = route(request);
+    const log = (entry: Record<string, unknown>) => {
+      const logObj = { ts: new Date().toISOString(), path, method, ...entry };
+      console.log(JSON.stringify(logObj));
+      if (env.LOG_SINK_URL) {
+        ctx.waitUntil(fetch(env.LOG_SINK_URL, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(logObj)
+        }));
+      }
+    };
     // Determine CORS origin based on env allowlist
     const originsList = (env.CORS_ORIGINS || '')
       .split(',')
@@ -136,7 +152,10 @@ export default {
     const notFound = () => send(errorEnvelope('not_found', 'Not Found'), 404);
     const badRequest = (message = 'Bad Request') => send(errorEnvelope('bad_request', message), 400);
     const serverError = (message = 'Internal Server Error') => send(errorEnvelope('server_error', message), 500);
-    const unauthorized = () => send(errorEnvelope('unauthorized', 'Unauthorized'), 401);
+    const unauthorized = (reason = 'unauthorized', actor?: string) => {
+      log({ level: 'warn', event: 'auth_failure', reason, actor });
+      return send(errorEnvelope('unauthorized', 'Unauthorized'), 401);
+    };
 
     // CORS preflight
     if (method === 'OPTIONS') {
@@ -150,22 +169,24 @@ export default {
     const ip = request.headers.get('cf-connecting-ip') || request.headers.get('x-forwarded-for') || 'unknown';
     if (isPublic) {
       authCtx = { admin: false, actor: `ip:${ip}` };
+    } else if (!env.API_TOKEN && !headerAuth) {
+      authCtx = { admin: false, actor: `ip:${ip}` };
     } else {
       const pref = 'bearer ';
-      if (!headerAuth.toLowerCase().startsWith(pref)) return unauthorized();
+      if (!headerAuth.toLowerCase().startsWith(pref)) return unauthorized('missing bearer', `ip:${ip}`);
       const secret = headerAuth.substring(pref.length);
       if (env.API_TOKEN && secret === env.API_TOKEN) {
         authCtx = { admin: true, actor: 'admin' };
       } else {
         const mkey = /^t_([a-z0-9-]{8,})\.(.+)$/i.exec(secret);
-        if (!mkey) return unauthorized();
+        if (!mkey) return unauthorized('invalid format', `ip:${ip}`);
         const tenantId = mkey[1];
         const keyPlain = mkey[2];
         const keyHash = await sha256Hex(keyPlain);
         const found = await env.DB.prepare('SELECT tenant_id FROM tenant_api_keys WHERE tenant_id = ?1 AND key_hash = ?2 AND active = 1')
           .bind(tenantId, keyHash)
           .first<{ tenant_id: string }>();
-        if (!found) return unauthorized();
+        if (!found) return unauthorized('key not found', `ip:${ip}`);
         authCtx = { admin: false, tenantId, actor: `api:${keyHash.slice(0,16)}` };
       }
     }
@@ -296,7 +317,8 @@ export default {
         )
           .bind(limit, offset)
           .all();
-  return send(results ?? []);
+        log({ level: 'info', event: 'tenant.list', actor: authCtx.actor, count: results?.length || 0 });
+        return send(results ?? []);
       } catch (e: any) {
         return serverError(e?.message);
       }
@@ -316,7 +338,8 @@ export default {
         )
           .bind(id)
           .all();
-  return send(results?.[0] ?? { tenant_id: id, name: body.name });
+        log({ level: 'info', event: 'tenant.create', actor: authCtx.actor, tenantId: id });
+        return send(results?.[0] ?? { tenant_id: id, name: body.name });
       } catch (e: any) {
         return serverError(e?.message);
       }
@@ -332,7 +355,11 @@ export default {
           )
             .bind(m[1])
             .all();
-          if (!results || results.length === 0) return notFound();
+          if (!results || results.length === 0) {
+            log({ level: 'info', event: 'tenant.read', actor: authCtx.actor, tenantId: m[1], status: 'not_found' });
+            return notFound();
+          }
+          log({ level: 'info', event: 'tenant.read', actor: authCtx.actor, tenantId: m[1] });
           return send(results[0]);
         } catch (e: any) {
           return serverError(e?.message);
@@ -347,12 +374,16 @@ export default {
           const res = await env.DB.prepare('UPDATE tenants SET name = COALESCE(?2, name) WHERE tenant_id = ?1')
             .bind(m[1], body.name ?? null)
             .run();
-          if (res.meta.changes === 0) return notFound();
+          if (res.meta.changes === 0) {
+            log({ level: 'info', event: 'tenant.update', actor: authCtx.actor, tenantId: m[1], status: 'not_found' });
+            return notFound();
+          }
           const { results } = await env.DB.prepare(
             'SELECT tenant_id, name, created_at FROM tenants WHERE tenant_id = ?1'
           )
             .bind(m[1])
             .all();
+          log({ level: 'info', event: 'tenant.update', actor: authCtx.actor, tenantId: m[1] });
           return send(results?.[0] ?? { tenant_id: m[1], name: body.name });
         } catch (e: any) {
           return serverError(e?.message);
@@ -365,7 +396,11 @@ export default {
           const res = await env.DB.prepare('DELETE FROM tenants WHERE tenant_id = ?1')
             .bind(m[1])
             .run();
-          if (res.meta.changes === 0) return notFound();
+          if (res.meta.changes === 0) {
+            log({ level: 'info', event: 'tenant.delete', actor: authCtx.actor, tenantId: m[1], status: 'not_found' });
+            return notFound();
+          }
+          log({ level: 'info', event: 'tenant.delete', actor: authCtx.actor, tenantId: m[1] });
           return send({ deleted: true });
         } catch (e: any) {
           return serverError(e?.message);
@@ -387,6 +422,7 @@ export default {
           )
             .bind(m[1], limit, offset)
             .all();
+          log({ level: 'info', event: 'user.list', actor: authCtx.actor, tenantId: m[1], count: results?.length || 0 });
           return send(results ?? []);
         } catch (e: any) {
           return serverError(e?.message);
@@ -410,6 +446,7 @@ export default {
           )
             .bind(userId)
             .all();
+          log({ level: 'info', event: 'user.create', actor: authCtx.actor, tenantId: m[1], userId });
           return send(results?.[0] ?? { user_id: userId, tenant_id: m[1], email: body.email, role });
         } catch (e: any) {
           return serverError(e?.message);
@@ -425,7 +462,11 @@ export default {
           )
             .bind(mu[1], mu[2])
             .all();
-          if (!results || results.length === 0) return notFound();
+          if (!results || results.length === 0) {
+            log({ level: 'info', event: 'user.read', actor: authCtx.actor, tenantId: mu[1], userId: mu[2], status: 'not_found' });
+            return notFound();
+          }
+          log({ level: 'info', event: 'user.read', actor: authCtx.actor, tenantId: mu[1], userId: mu[2] });
           return send(results[0]);
         } catch (e: any) {
           return serverError(e?.message);
@@ -442,12 +483,16 @@ export default {
           )
             .bind(mu[1], mu[2], body.email ?? null, body.role ?? null)
             .run();
-          if (res.meta.changes === 0) return notFound();
+          if (res.meta.changes === 0) {
+            log({ level: 'info', event: 'user.update', actor: authCtx.actor, tenantId: mu[1], userId: mu[2], status: 'not_found' });
+            return notFound();
+          }
           const { results } = await env.DB.prepare(
             'SELECT user_id, tenant_id, email, role, created_at FROM users WHERE tenant_id = ?1 AND user_id = ?2'
           )
             .bind(mu[1], mu[2])
             .all();
+          log({ level: 'info', event: 'user.update', actor: authCtx.actor, tenantId: mu[1], userId: mu[2] });
           return send(results?.[0] ?? { user_id: mu[2], tenant_id: mu[1], ...body });
         } catch (e: any) {
           return serverError(e?.message);
@@ -460,7 +505,11 @@ export default {
           )
             .bind(mu[1], mu[2])
             .run();
-          if (res.meta.changes === 0) return notFound();
+          if (res.meta.changes === 0) {
+            log({ level: 'info', event: 'user.delete', actor: authCtx.actor, tenantId: mu[1], userId: mu[2], status: 'not_found' });
+            return notFound();
+          }
+          log({ level: 'info', event: 'user.delete', actor: authCtx.actor, tenantId: mu[1], userId: mu[2] });
           return send({ deleted: true });
         } catch (e: any) {
           return serverError(e?.message);
@@ -481,6 +530,7 @@ export default {
             .bind(body.tenant_id, keyHash)
             .run();
           const apiKey = `t_${body.tenant_id}.${raw}`;
+          log({ level: 'info', event: 'apikey.create', actor: authCtx.actor, tenantId: body.tenant_id });
           return send({ api_key: apiKey }, 201);
         } catch (e: any) {
           return serverError(e?.message);
@@ -494,6 +544,7 @@ export default {
             const { results } = await env.DB.prepare('SELECT key_id, tenant_id, active, created_at FROM tenant_api_keys WHERE tenant_id = ?1 ORDER BY created_at DESC')
               .bind(mk[1])
               .all();
+            log({ level: 'info', event: 'apikey.list', actor: authCtx.actor, tenantId: mk[1], count: results?.length || 0 });
             return send(results ?? []);
           } catch (e: any) {
             return serverError(e?.message);
@@ -508,7 +559,11 @@ export default {
             const res = await env.DB.prepare('UPDATE tenant_api_keys SET active = 0 WHERE tenant_id = ?1 AND key_id = ?2')
               .bind(mkd[1], Number(mkd[2]))
               .run();
-            if (res.meta.changes === 0) return notFound();
+            if (res.meta.changes === 0) {
+              log({ level: 'info', event: 'apikey.revoke', actor: authCtx.actor, tenantId: mkd[1], keyId: mkd[2], status: 'not_found' });
+              return notFound();
+            }
+            log({ level: 'info', event: 'apikey.revoke', actor: authCtx.actor, tenantId: mkd[1], keyId: mkd[2] });
             return send({ revoked: true });
           } catch (e: any) {
             return serverError(e?.message);
