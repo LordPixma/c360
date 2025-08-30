@@ -149,6 +149,14 @@
   border-radius: 10px;
 }
 
+.success {
+  color: #79ffa1;
+  background: rgba(0, 255, 128, 0.08);
+  border: 1px solid rgba(0, 255, 128, 0.15);
+  padding: 8px 10px;
+  border-radius: 10px;
+}
+
 .help-row {
   display: flex;
   justify-content: flex-end;
