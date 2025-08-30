@@ -1,0 +1,6 @@
+Metadata-Version: 2.1
+Name: c360-flask
+Version: 0.1.0
+Summary: C360 Flask backend (local dev or future migration)
+Requires-Python: >=3.9
+Provides-Extra: dev
