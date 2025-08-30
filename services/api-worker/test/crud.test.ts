@@ -1,12 +1,21 @@
 import { describe, it, expect } from 'vitest';
 import worker from '../src/index';
 import { MockD1 } from './utils/mockD1';
+import { MockKV } from './utils/mockKV';
 
-const make = (path: string, init?: RequestInit) => new Request(`http://localhost${path}`, init);
+const token = 'testtoken';
+const make = (path: string, init: RequestInit = {}) =>
+  new Request(`http://localhost${path}`, {
+    ...init,
+    headers: {
+      authorization: `Bearer ${token}`,
+      ...(init.headers || {})
+    }
+  });
 
 describe('tenants and users CRUD', () => {
   it('tenant CRUD happy path', async () => {
-    const env: any = { DB: new MockD1(), KV: new Map() };
+    const env: any = { DB: new MockD1(), KV: new MockKV(), API_TOKEN: token };
 
     // list empty
     let res = await worker.fetch(make('/tenants'), env, {} as any);
@@ -44,7 +53,7 @@ describe('tenants and users CRUD', () => {
   });
 
   it('user CRUD under tenant', async () => {
-    const env: any = { DB: new MockD1(), KV: new Map() };
+    const env: any = { DB: new MockD1(), KV: new MockKV(), API_TOKEN: token };
 
     // create tenant
     let res = await worker.fetch(make('/tenants', { method: 'POST', body: JSON.stringify({ name: 'T' }), headers: { 'content-type': 'application/json' } }), env, {} as any);
@@ -99,7 +108,7 @@ describe('tenants and users CRUD', () => {
   });
 
   it('returns 400/404 appropriately', async () => {
-    const env: any = { DB: new MockD1(), KV: new Map() };
+    const env: any = { DB: new MockD1(), KV: new MockKV(), API_TOKEN: token };
 
     // POST tenant without body
     let res = await worker.fetch(make('/tenants', { method: 'POST', body: '{}', headers: { 'content-type': 'application/json' } }), env, {} as any);
