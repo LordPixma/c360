@@ -9,6 +9,7 @@ export interface Env {
   RL_MAX_REQUESTS?: string;   // default for unauthenticated/public
   RL_MAX_REQUESTS_AUTH?: string; // for authenticated (API token/key)
   DEV_LOGIN_ENABLED?: string; // "true" to enable /auth/login for local/dev only
+  JWT_SECRET?: string; // JWT signing secret
 }
 // Import OpenAPI spec so it's bundled
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
@@ -73,6 +74,35 @@ async function sha256Hex(input: string): Promise<string> {
   const data = new TextEncoder().encode(input);
   const digest = await crypto.subtle.digest('SHA-256', data);
   return toHex(digest);
+}
+
+// Password verification function
+async function verifyPassword(password: string, hash: string, salt: string): Promise<boolean> {
+  const saltedPassword = password + salt;
+  const computedHash = await sha256Hex(saltedPassword);
+  return computedHash === hash;
+}
+
+// JWT signing function
+async function signJwt(payload: Record<string, any>, secret: string): Promise<string> {
+  const header = { alg: 'HS256', typ: 'JWT' };
+  const encodedHeader = btoa(JSON.stringify(header)).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+  const encodedPayload = btoa(JSON.stringify(payload)).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+  const data = `${encodedHeader}.${encodedPayload}`;
+  
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+  
+  const signature = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(data));
+  const encodedSignature = btoa(String.fromCharCode(...new Uint8Array(signature)))
+    .replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+  
+  return `${data}.${encodedSignature}`;
 }
 
 type AuthContext = {
@@ -177,7 +207,7 @@ export default {
 
     // Health
   if (path === '/health') return send({ status: 'ok', service: 'c360-api' });
-    // Development-only auth: exchange email/password for a tenant API key
+    // Development-only auth: exchange email/password for JWT token
     if (path === '/auth/login' && method === 'POST') {
       try {
         if ((env.DEV_LOGIN_ENABLED || '').toLowerCase() !== 'true') {
@@ -206,34 +236,20 @@ export default {
             .run();
         }
 
-        // Upsert user within tenant
-        let user = await env.DB.prepare('SELECT user_id, tenant_id, email, role, created_at FROM users WHERE tenant_id = ?1 AND email = ?2')
-          .bind(tenantId, body.email)
-          .first<{ user_id: string; tenant_id: string; email: string; role: string; created_at: string }>();
-        if (!user) {
-          const uid = crypto.randomUUID();
-          await env.DB.prepare('INSERT INTO users (user_id, tenant_id, email, role) VALUES (?1, ?2, ?3, ?4)')
-            .bind(uid, tenantId, body.email, 'member')
-            .run();
-          user = await env.DB.prepare('SELECT user_id, tenant_id, email, role, created_at FROM users WHERE user_id = ?1')
-            .bind(uid)
-            .first<{ user_id: string; tenant_id: string; email: string; role: string; created_at: string }>();
+        // Fetch user by email
+        const user = await env.DB.prepare('SELECT * FROM users WHERE email = ?1')
+          .bind(body.email)
+          .first<{ user_id: string; tenant_id: string; email: string; role: string; password_hash: string; password_salt: string }>();
+        if (!user) return unauthorized();
+        if (!user.password_hash || !user.password_salt) return unauthorized();
+        const ok = await verifyPassword(body.password, user.password_hash, user.password_salt);
+        if (!ok) return unauthorized();
+        const payload = { sub: user.user_id, tenant_id: user.tenant_id, role: user.role, exp: Math.floor(Date.now() / 1000) + 3600 };
+        if (!env.JWT_SECRET) {
+          return serverError('JWT_SECRET is not configured on the server');
         }
-
-        // Issue a tenant API key
-        const raw = crypto.randomUUID().replace(/-/g, '') + crypto.randomUUID().replace(/-/g, '');
-        const keyHash = await sha256Hex(raw);
-        await env.DB.prepare('INSERT INTO tenant_api_keys (tenant_id, key_hash, active, created_at) VALUES (?1, ?2, 1, datetime("now"))')
-          .bind(tenantId, keyHash)
-          .run();
-        const apiKey = `t_${tenantId}.${raw}`;
-
-        return send({
-          api_key: apiKey,
-          tenant_id: tenantId,
-          tenant: tenantName ? { tenant_id: tenantId, name: tenantName } : { tenant_id: tenantId },
-          user
-        }, 200);
+        const token = await signJwt(payload, env.JWT_SECRET);
+        return send({ token, user: { user_id: user.user_id, tenant_id: user.tenant_id, email: user.email, role: user.role } });
       } catch (e: any) {
         return serverError(e?.message);
       }

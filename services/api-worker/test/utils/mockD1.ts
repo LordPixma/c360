@@ -4,6 +4,15 @@ export class MockD1 {
   private tenants: Row[] = [];
   private users: Row[] = [];
 
+  // Allow tests to add data directly
+  addUser(user: Row) {
+    this.users.push(user);
+  }
+
+  addTenant(tenant: Row) {
+    this.tenants.push(tenant);
+  }
+
   prepare(sql: string) {
     const lower = sql.trim().toLowerCase();
     const self = this;
@@ -33,9 +42,17 @@ export class MockD1 {
                 const [userId] = args;
                 return { results: self.users.filter(u => u.user_id === userId) };
               }
+              if (lower.includes('where email = ?1')) {
+                const [email] = args;
+                return { results: self.users.filter(u => u.email === email) };
+              }
               return { results: [...self.users] };
             }
             return { results: [] };
+          },
+          async first() {
+            const allResult = await this.all();
+            return allResult.results?.[0] || null;
           },
           async run() {
             // INSERTS

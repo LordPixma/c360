@@ -1,9 +1,20 @@
 import { describe, it, expect } from 'vitest';
 import worker from '../src/index';
 import { MockD1 } from './utils/mockD1';
+import { MockKV } from './utils/mockKV';
 
 const makeRequest = (path: string, init?: RequestInit) =>
   new Request(`http://localhost${path}`, init);
+
+// Helper to make authenticated requests
+const makeAuthRequest = (path: string, init?: RequestInit) =>
+  new Request(`http://localhost${path}`, {
+    ...init,
+    headers: {
+      ...init?.headers,
+      'authorization': 'Bearer test-admin-token'
+    }
+  });
 
 describe('api worker', () => {
   it('health endpoint works', async () => {
@@ -14,8 +25,8 @@ describe('api worker', () => {
   });
 
   it('tenants list returns array', async () => {
-    const env = { DB: new MockD1(), KV: new Map() } as any;
-    const res = await worker.fetch(makeRequest('/tenants'), env, {} as any);
+    const env = { DB: new MockD1(), KV: new MockKV(), API_TOKEN: 'test-admin-token' } as any;
+    const res = await worker.fetch(makeAuthRequest('/tenants'), env, {} as any);
     expect(res.status).toBe(200);
     const data = await res.json();
     expect(Array.isArray(data)).toBe(true);
