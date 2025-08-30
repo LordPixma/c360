@@ -4,13 +4,12 @@ export default defineWorkersConfig({
   test: {
     pool: '@cloudflare/vitest-pool-workers',
     globals: true,
-    env: { NODE_ENV: 'test' },
+  include: ['test/**/*.{test,spec}.ts'],
+  exclude: ['test/utils/**'],
+  env: { NODE_ENV: 'test' },
     poolOptions: {
       workers: {
-        miniflare: {
-          compatibilityDate: '2024-11-01',
-          compatibilityFlags: ['export_commonjs_default']
-        }
+    miniflare: { compatibilityDate: '2024-11-01' }
       }
     }
   }
