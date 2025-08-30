@@ -3,6 +3,7 @@ import uuid
 from ..extensions import db
 from ..models import Tenant, User
 from sqlalchemy.exc import IntegrityError
+from ..utils import error_response
 import re
 
 bp = Blueprint("tenants", __name__)
@@ -97,7 +98,7 @@ def create_user(tenant_id: str):
         db.session.commit()
     except IntegrityError:
         db.session.rollback()
-        return {"error": "email already exists"}, 409
+        return error_response("conflict", "email already exists", 409)
     return {
         "user_id": user.user_id,
         "tenant_id": user.tenant_id,

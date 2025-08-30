@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: |
+            services/api-worker/package-lock.json
+            services/api-worker/package.json
+
+      - name: Install Node deps
+        working-directory: services/api-worker
+        run: npm ci
+
+      - name: Typecheck (tsc)
+        working-directory: services/api-worker
+        run: npm run check
+
+      - name: Run vitest
+        working-directory: services/api-worker
+        run: npm test --silent
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python deps
+        working-directory: backend/flask-app
+        run: |
+          python -m pip install --upgrade pip
+          pip install .[dev]
+
+      - name: Run pytest
+        working-directory: backend/flask-app
+        run: pytest -q
+
+      - name: OpenAPI Lint
+        run: npx -y @redocly/cli@latest lint services/api-worker/openapi.json

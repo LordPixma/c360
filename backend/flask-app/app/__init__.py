@@ -1,5 +1,6 @@
 from typing import Optional, Mapping, Any
 from flask import Flask
+import os
 from .extensions import db
 
 
@@ -9,6 +10,7 @@ def create_app(config: Optional[Mapping[str, Any]] = None):
         SECRET_KEY="dev",
         SQLALCHEMY_DATABASE_URI="sqlite:///c360_dev.db",  # local dev default; replace with D1 or other DB
         SQLALCHEMY_TRACK_MODIFICATIONS=False,
+        CORS_ORIGIN=os.getenv("C360_CORS_ORIGIN", "*"),
     )
     if config:
         default_config.update(config)
@@ -17,10 +19,10 @@ def create_app(config: Optional[Mapping[str, Any]] = None):
     # Initialize extensions
     db.init_app(app)
 
-    # CORS (simple allow-all for dev) and uniform error envelope
+    # CORS (configurable via env) and uniform error envelope
     @app.after_request
     def add_cors_headers(resp):
-        resp.headers.setdefault("Access-Control-Allow-Origin", "*")
+        resp.headers.setdefault("Access-Control-Allow-Origin", app.config.get("CORS_ORIGIN", "*"))
         resp.headers.setdefault("Access-Control-Allow-Methods", "GET,POST,PATCH,DELETE,OPTIONS")
         resp.headers.setdefault("Access-Control-Allow-Headers", "Content-Type,Authorization")
         resp.headers.setdefault("Access-Control-Max-Age", "86400")
@@ -33,6 +35,10 @@ def create_app(config: Optional[Mapping[str, Any]] = None):
     @app.errorhandler(404)
     def handle_404(_):
         return {"error": {"code": "not_found", "message": "Not Found"}}, 404
+
+    @app.errorhandler(409)
+    def handle_409(err):
+        return {"error": {"code": "conflict", "message": str(getattr(err, 'description', 'Conflict'))}}, 409
 
     @app.errorhandler(500)
     def handle_500(err):
