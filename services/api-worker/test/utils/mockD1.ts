@@ -41,6 +41,10 @@ export class MockD1 {
             }
             return { results: [] };
           },
+          async first<T = any>() {
+            const { results } = await (this as any).all();
+            return (results as any[])?.[0] ?? null;
+          },
           async run() {
             // INSERTS
             if (lower.startsWith('insert into tenants')) {
