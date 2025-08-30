@@ -8,6 +8,7 @@ export interface Env {
   RL_WINDOW_SECONDS?: string; // e.g., "60"
   RL_MAX_REQUESTS?: string;   // default for unauthenticated/public
   RL_MAX_REQUESTS_AUTH?: string; // for authenticated (API token/key)
+  DEV_LOGIN_ENABLED?: string; // "true" to enable /auth/login for local/dev only
 }
 // Import OpenAPI spec so it's bundled
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
@@ -143,7 +144,7 @@ export default {
     }
 
     // Auth: admin bearer token or per-tenant API key
-    const isPublic = path === '/health' || (path === '/openapi.json' && method === 'GET') || (path === '/docs' && method === 'GET');
+  const isPublic = path === '/health' || (path === '/openapi.json' && method === 'GET') || (path === '/docs' && method === 'GET') || (path === '/auth/login' && method === 'POST');
     const headerAuth = request.headers.get('authorization') || '';
     let authCtx: AuthContext = { admin: false, actor: '' };
     const ip = request.headers.get('cf-connecting-ip') || request.headers.get('x-forwarded-for') || 'unknown';
@@ -176,6 +177,68 @@ export default {
 
     // Health
   if (path === '/health') return send({ status: 'ok', service: 'c360-api' });
+    // Development-only auth: exchange email/password for a tenant API key
+    if (path === '/auth/login' && method === 'POST') {
+      try {
+        if ((env.DEV_LOGIN_ENABLED || '').toLowerCase() !== 'true') {
+          return notFound();
+        }
+        const body = await readJson<{ email?: string; password?: string; tenant_id?: string; }>(request);
+        if (!body?.email) return badRequest('email is required');
+        if (!isEmail(body.email)) return badRequest('invalid email');
+        if (!body?.password || body.password.length < 8) return badRequest('invalid password');
+
+        // Resolve tenant
+        let tenantId = body.tenant_id;
+        let tenantName: string | undefined;
+        if (tenantId) {
+          const found = await env.DB.prepare('SELECT tenant_id, name, created_at FROM tenants WHERE tenant_id = ?1')
+            .bind(tenantId)
+            .first<{ tenant_id: string; name: string; created_at: string }>();
+          if (!found) return badRequest('tenant not found');
+          tenantName = found.name;
+        } else {
+          // Create a dev tenant if none provided
+          tenantId = crypto.randomUUID();
+          tenantName = `Dev Tenant (${body.email})`;
+          await env.DB.prepare('INSERT INTO tenants (tenant_id, name) VALUES (?1, ?2)')
+            .bind(tenantId, tenantName)
+            .run();
+        }
+
+        // Upsert user within tenant
+        let user = await env.DB.prepare('SELECT user_id, tenant_id, email, role, created_at FROM users WHERE tenant_id = ?1 AND email = ?2')
+          .bind(tenantId, body.email)
+          .first<{ user_id: string; tenant_id: string; email: string; role: string; created_at: string }>();
+        if (!user) {
+          const uid = crypto.randomUUID();
+          await env.DB.prepare('INSERT INTO users (user_id, tenant_id, email, role) VALUES (?1, ?2, ?3, ?4)')
+            .bind(uid, tenantId, body.email, 'member')
+            .run();
+          user = await env.DB.prepare('SELECT user_id, tenant_id, email, role, created_at FROM users WHERE user_id = ?1')
+            .bind(uid)
+            .first<{ user_id: string; tenant_id: string; email: string; role: string; created_at: string }>();
+        }
+
+        // Issue a tenant API key
+        const raw = crypto.randomUUID().replace(/-/g, '') + crypto.randomUUID().replace(/-/g, '');
+        const keyHash = await sha256Hex(raw);
+        await env.DB.prepare('INSERT INTO tenant_api_keys (tenant_id, key_hash, active, created_at) VALUES (?1, ?2, 1, datetime("now"))')
+          .bind(tenantId, keyHash)
+          .run();
+        const apiKey = `t_${tenantId}.${raw}`;
+
+        return send({
+          api_key: apiKey,
+          tenant_id: tenantId,
+          tenant: tenantName ? { tenant_id: tenantId, name: tenantName } : { tenant_id: tenantId },
+          user
+        }, 200);
+      } catch (e: any) {
+        return serverError(e?.message);
+      }
+    }
+
 
     // OpenAPI
     if (path === '/openapi.json' && method === 'GET') {
@@ -201,6 +264,24 @@ export default {
   </body>
 </html>`;
   return new Response(html, { status: 200, headers: withCors({ 'content-type': 'text/html; charset=utf-8', ...extraHeaders }, corsOrigin) });
+    }
+
+    // Who am I (authenticated)
+    if (path === '/whoami' && method === 'GET') {
+      try {
+        if (authCtx.admin) {
+          return send({ admin: true });
+        }
+        if (authCtx.tenantId) {
+          const t = await env.DB.prepare('SELECT tenant_id, name, created_at FROM tenants WHERE tenant_id = ?1')
+            .bind(authCtx.tenantId)
+            .first<{ tenant_id: string; name: string; created_at: string }>();
+          return send({ admin: false, tenant: t || { tenant_id: authCtx.tenantId } });
+        }
+        return send({ admin: false });
+      } catch (e: any) {
+        return serverError(e?.message);
+      }
     }
 
     // Tenants: list
