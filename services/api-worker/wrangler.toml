@@ -19,6 +19,8 @@ preview_id = "a258aa13ae6542d28b2f3200b206cc69"
 # Local/dev default CORS (override in envs below). Use either CORS_ORIGIN (single) or CORS_ORIGINS (comma-separated).
 CORS_ORIGIN = "http://localhost:5173"
 DEV_LOGIN_ENABLED = "true"
+# Optional external log sink endpoint for structured logs
+LOG_SINK_URL = ""
 
 # Staging environment
 [env.staging]
