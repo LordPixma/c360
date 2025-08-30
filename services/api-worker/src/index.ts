@@ -117,11 +117,15 @@ export default {
       const logObj = { ts: new Date().toISOString(), path, method, ...entry };
       console.log(JSON.stringify(logObj));
       if (env.LOG_SINK_URL) {
-        ctx.waitUntil(fetch(env.LOG_SINK_URL, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(logObj)
-        }));
+        ctx.waitUntil(
+          fetch(env.LOG_SINK_URL, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(logObj)
+          }).catch((err) => {
+            console.error('Failed to send log to external sink:', err);
+          })
+        );
       }
     };
     // Determine CORS origin based on env allowlist
