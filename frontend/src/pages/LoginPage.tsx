@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import './LoginPage.scss'
 import { apiGet, loginWithPassword } from '../lib/api'
 
@@ -16,12 +16,42 @@ export default function LoginPage() {
   const [touched, setTouched] = useState<{ email?: boolean; password?: boolean }>({})
   const lastSubmitRef = useRef<number>(0)
   const [tokenEnabled, setTokenEnabled] = useState(false)
+  const [identity, setIdentity] = useState<any | null>(null)
 
   const emailValid = useMemo(() => /.+@.+\..+/.test(email), [email])
   const canSubmit = useMemo(() => {
     if (tokenEnabled) return !!token && !loading
     return emailValid && password.length >= 8 && !loading
   }, [emailValid, password, tokenEnabled, token, loading])
+
+  async function probeIdentity(bearer?: string) {
+    try {
+      const who = await apiGet<any>('/whoami', bearer || token)
+      setIdentity(who)
+      return who
+    } catch {
+      return null
+    }
+  }
+
+  function onLogout() {
+    try { localStorage.removeItem('c360_token') } catch {}
+    setToken('')
+    setIdentity(null)
+    setError(null)
+    setSuccess(null)
+    setTouched({})
+    setTokenEnabled(false)
+  }
+
+  useEffect(() => {
+    // Auto sign-in if we already have a token
+    if (!token) return
+    probeIdentity(token).then((who) => {
+      if (who) setSuccess('You are signed in')
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -37,6 +67,7 @@ export default function LoginPage() {
         if (!token) throw new Error('Enter an API token or tenant key')
         const tenants = await apiGet<any[]>('/tenants', token)
         try { localStorage.setItem('c360_token', token) } catch {}
+        const who = await probeIdentity(token)
         setSuccess(`Authenticated. Found ${tenants.length} tenant(s).`)
         return
       }
@@ -61,8 +92,9 @@ export default function LoginPage() {
       try { if (bearer) localStorage.setItem('c360_token', bearer) } catch {}
 
       // Verify the token by hitting a protected endpoint
-      const tenants = await apiGet<any[]>('/tenants', bearer)
-      setSuccess(`Authenticated. Found ${tenants.length} tenant(s).`)
+  const tenants = await apiGet<any[]>('/tenants', bearer)
+  await probeIdentity(bearer)
+  setSuccess(`Authenticated. Found ${tenants.length} tenant(s).`)
     } catch (err: any) {
       const msg = err?.message || 'Login failed'
       if (err?.status === 401) setError('Unauthorized: check your credentials or token')
@@ -92,7 +124,28 @@ export default function LoginPage() {
         <div className="panel-inner">
           <h2>Welcome back</h2>
           <p className="subtitle">Sign in to continue to your workspace</p>
-          <form onSubmit={onSubmit} className="form">
+          {identity ? (
+            <div className="signed-in">
+              <div className="top-row">
+                <div>
+                  <div className="small-label">Signed in</div>
+                  <div className="who">
+                    {identity.admin ? (
+                      <span>Administrator</span>
+                    ) : (
+                      <span>
+                        {identity?.user?.email ? `${identity.user.email} · ` : ''}
+                        {identity?.tenant?.name || identity?.tenant?.tenant_id || 'Tenant'}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <button type="button" className="secondary" onClick={onLogout}>Log out</button>
+              </div>
+            </div>
+          ) : null}
+
+          <form onSubmit={onSubmit} className="form" aria-disabled={!!identity}>
             <label>
               <span>Email</span>
               <input
@@ -103,6 +156,7 @@ export default function LoginPage() {
                 onBlur={() => setTouched(t => ({ ...t, email: true }))}
                 required
                 aria-invalid={touched.email && !emailValid}
+                disabled={!!identity}
               />
               {touched.email && !emailValid && (
                 <small className="field-error">Enter a valid email address</small>
@@ -118,6 +172,7 @@ export default function LoginPage() {
                 onBlur={() => setTouched(t => ({ ...t, password: true }))}
                 required
                 aria-invalid={touched.password && password.length < 8}
+                disabled={!!identity}
               />
               {touched.password && password.length < 8 && (
                 <small className="field-error">Password must be at least 8 characters</small>
@@ -131,8 +186,8 @@ export default function LoginPage() {
                 placeholder="Paste API token or t_<tenantId>.<secret>"
                 value={token}
                 onChange={e => setToken(e.target.value)}
-                disabled={!tokenEnabled}
-                readOnly={!tokenEnabled}
+        disabled={!tokenEnabled || !!identity}
+        readOnly={!tokenEnabled || !!identity}
               />
               {!tokenEnabled && (
                 <small className="field-hint">This will auto-enable if the login service is unavailable.</small>
@@ -140,7 +195,7 @@ export default function LoginPage() {
             </label>
             {error && <div className="error" role="alert">{error}</div>}
             {success && <div className="success" role="status">{success}</div>}
-            <button type="submit" disabled={!canSubmit || loading} className="primary">
+      <button type="submit" disabled={!canSubmit || loading || !!identity} className="primary">
               {loading ? 'Signing in…' : tokenEnabled ? 'Sign in with token' : 'Sign in'}
             </button>
             <div className="help-row">
