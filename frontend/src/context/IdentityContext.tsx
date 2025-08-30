@@ -1,5 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
-import { apiGet } from '../lib/api'
+import { apiGet, API_BASE } from '../lib/api'
 
 export type Identity = {
   admin?: boolean
@@ -9,11 +9,9 @@ export type Identity = {
 type Ctx = {
   identity: Identity | null
   email: string
-  token: string
   loading: boolean
   error: string | null
   refresh: () => Promise<void>
-  setToken: (t: string) => void
   logout: () => void
 }
 
@@ -24,43 +22,29 @@ export function IdentityProvider({ children }: { children: React.ReactNode }) {
   const [email, setEmail] = useState<string>(() => {
     try { return localStorage.getItem('c360_email') || '' } catch { return '' }
   })
-  const [token, setTokenState] = useState<string>(() => {
-    try { return localStorage.getItem('c360_token') || '' } catch { return '' }
-  })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const inFlight = useRef<Promise<void> | null>(null)
 
-  const setToken = useCallback((t: string) => {
-    setTokenState(t)
-    try { t ? localStorage.setItem('c360_token', t) : localStorage.removeItem('c360_token') } catch {}
-  }, [])
-
-  const logout = useCallback(() => {
-    setToken('')
+  const logout = useCallback(async () => {
     setIdentity(null)
     setError(null)
     setLoading(false)
+    try { await fetch(`${API_BASE}/auth/logout`, { method: 'POST', credentials: 'include' }) } catch {}
     try { localStorage.removeItem('c360_email') } catch {}
-  }, [setToken])
+  }, [])
 
   const refresh = useCallback(async () => {
-    if (!token) {
-      setIdentity(null)
-      setError(null)
-      return
-    }
     if (inFlight.current) return inFlight.current
     const p = (async () => {
       setLoading(true)
       setError(null)
       try {
-        const who = await apiGet<Identity>('/whoami', token)
+        const who = await apiGet<Identity>('/whoami')
         setIdentity(who || null)
         setEmail(() => { try { return localStorage.getItem('c360_email') || '' } catch { return '' } })
       } catch (e: any) {
         setIdentity(null)
-        // Keep token but surface a soft error
         setError(e?.message || 'Failed to fetch identity')
       } finally {
         setLoading(false)
@@ -69,7 +53,7 @@ export function IdentityProvider({ children }: { children: React.ReactNode }) {
     })()
     inFlight.current = p
     return p
-  }, [token])
+  }, [])
 
   // Route change listener: popstate, hashchange, pushState/replaceState hooks
   useEffect(() => {
@@ -97,7 +81,7 @@ export function IdentityProvider({ children }: { children: React.ReactNode }) {
   // Initial fetch on mount and when token changes
   useEffect(() => { refresh() }, [refresh])
 
-  const value = useMemo<Ctx>(() => ({ identity, email, token, loading, error, refresh, setToken, logout }), [identity, email, token, loading, error, refresh, setToken, logout])
+  const value = useMemo<Ctx>(() => ({ identity, email, loading, error, refresh, logout }), [identity, email, loading, error, refresh, logout])
   return <IdentityContext.Provider value={value}>{children}</IdentityContext.Provider>
 }
 

@@ -144,16 +144,31 @@ export default {
     }
 
     // Auth: admin bearer token or per-tenant API key
-  const isPublic = path === '/health' || (path === '/openapi.json' && method === 'GET') || (path === '/docs' && method === 'GET') || (path === '/auth/login' && method === 'POST');
+    const isPublic =
+      path === '/health' ||
+      (path === '/openapi.json' && method === 'GET') ||
+      (path === '/docs' && method === 'GET') ||
+      (path === '/auth/login' && method === 'POST') ||
+      (path === '/auth/logout' && method === 'POST');
+
     const headerAuth = request.headers.get('authorization') || '';
+    const cookieHeader = request.headers.get('cookie') || '';
+    const getCookie = (name: string): string | undefined => {
+      const m = cookieHeader.match(new RegExp(`(?:^|; )${name}=([^;]*)`));
+      return m ? decodeURIComponent(m[1]) : undefined;
+    };
+    const cookieToken = getCookie('auth_token');
+
     let authCtx: AuthContext = { admin: false, actor: '' };
     const ip = request.headers.get('cf-connecting-ip') || request.headers.get('x-forwarded-for') || 'unknown';
     if (isPublic) {
       authCtx = { admin: false, actor: `ip:${ip}` };
     } else {
       const pref = 'bearer ';
-      if (!headerAuth.toLowerCase().startsWith(pref)) return unauthorized();
-      const secret = headerAuth.substring(pref.length);
+      let secret: string | undefined;
+      if (headerAuth.toLowerCase().startsWith(pref)) secret = headerAuth.substring(pref.length);
+      else if (cookieToken) secret = cookieToken;
+      if (!secret) return unauthorized();
       if (env.API_TOKEN && secret === env.API_TOKEN) {
         authCtx = { admin: true, actor: 'admin' };
       } else {
@@ -162,11 +177,13 @@ export default {
         const tenantId = mkey[1];
         const keyPlain = mkey[2];
         const keyHash = await sha256Hex(keyPlain);
-        const found = await env.DB.prepare('SELECT tenant_id FROM tenant_api_keys WHERE tenant_id = ?1 AND key_hash = ?2 AND active = 1')
+        const found = await env.DB.prepare(
+          'SELECT tenant_id FROM tenant_api_keys WHERE tenant_id = ?1 AND key_hash = ?2 AND active = 1'
+        )
           .bind(tenantId, keyHash)
           .first<{ tenant_id: string }>();
         if (!found) return unauthorized();
-        authCtx = { admin: false, tenantId, actor: `api:${keyHash.slice(0,16)}` };
+        authCtx = { admin: false, tenantId, actor: `api:${keyHash.slice(0, 16)}` };
       }
     }
 
@@ -227,18 +244,24 @@ export default {
           .bind(tenantId, keyHash)
           .run();
         const apiKey = `t_${tenantId}.${raw}`;
-
-        return send({
-          api_key: apiKey,
-          tenant_id: tenantId,
-          tenant: tenantName ? { tenant_id: tenantId, name: tenantName } : { tenant_id: tenantId },
-          user
-        }, 200);
+        extraHeaders['set-cookie'] = `auth_token=${apiKey}; HttpOnly; Secure; SameSite=Strict; Path=/`;
+        return send(
+          {
+            api_key: apiKey,
+            tenant_id: tenantId,
+            tenant: tenantName ? { tenant_id: tenantId, name: tenantName } : { tenant_id: tenantId },
+            user
+          },
+          200
+        );
       } catch (e: any) {
         return serverError(e?.message);
       }
     }
-
+    if (path === '/auth/logout' && method === 'POST') {
+      extraHeaders['set-cookie'] = 'auth_token=; Max-Age=0; HttpOnly; Secure; SameSite=Strict; Path=/';
+      return send({ ok: true });
+    }
 
     // OpenAPI
     if (path === '/openapi.json' && method === 'GET') {

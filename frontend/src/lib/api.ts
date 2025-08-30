@@ -30,7 +30,8 @@ export async function apiGet<T = unknown>(path: string, token?: string): Promise
       headers: {
         ...(raw ? { Authorization: `Bearer ${raw}` } : {}),
         'accept': 'application/json'
-      }
+      },
+      credentials: 'include'
     })
   } catch (e: any) {
     const err: ApiError = { status: 0, message: 'Network error: cannot reach API', code: 'network_error' }
@@ -56,7 +57,8 @@ export async function loginWithPassword(email: string, password: string): Promis
         'content-type': 'application/json',
         'accept': 'application/json'
       },
-      body: JSON.stringify({ email, password })
+      body: JSON.stringify({ email, password }),
+      credentials: 'include'
     })
   } catch (e: any) {
     const err: ApiError = { status: 0, message: 'Network error: cannot reach login service', code: 'network_error' }
