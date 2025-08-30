@@ -66,7 +66,10 @@ export default function LoginPage() {
       if (tokenEnabled) {
         if (!token) throw new Error('Enter an API token or tenant key')
         const tenants = await apiGet<any[]>('/tenants', token)
-        try { localStorage.setItem('c360_token', token) } catch {}
+        try {
+          localStorage.setItem('c360_token', token)
+          if (email) localStorage.setItem('c360_email', email)
+        } catch {}
         const who = await probeIdentity(token)
         setSuccess(`Authenticated. Found ${tenants.length} tenant(s).`)
         return
@@ -89,7 +92,10 @@ export default function LoginPage() {
         }
         throw err
       }
-      try { if (bearer) localStorage.setItem('c360_token', bearer) } catch {}
+      try {
+        if (bearer) localStorage.setItem('c360_token', bearer)
+        localStorage.setItem('c360_email', email)
+      } catch {}
 
       // Verify the token by hitting a protected endpoint
   const tenants = await apiGet<any[]>('/tenants', bearer)

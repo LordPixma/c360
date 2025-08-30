@@ -14,6 +14,9 @@
   border: 1px solid rgba(255,255,255,0.08);
   border-radius: 999px;
   color: #e6ebf7;
+  opacity: 0;
+  transform: translateY(-4px);
+  animation: pill-in 240ms ease-out forwards;
 }
 
 .dot {
@@ -33,4 +36,20 @@
   color: #8fb5ff;
   cursor: pointer;
   padding: 0;
+}
+
+.email {
+  color: #cfe1ff;
+}
+
+.sep {
+  margin: 0 6px;
+  color: #9fb4d6;
+}
+
+@keyframes pill-in {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
