@@ -4,6 +4,15 @@ export class MockD1 {
   private tenants: Row[] = [];
   private users: Row[] = [];
 
+  // Allow tests to add data directly
+  addUser(user: Row) {
+    this.users.push(user);
+  }
+
+  addTenant(tenant: Row) {
+    this.tenants.push(tenant);
+  }
+
   prepare(sql: string) {
     const lower = sql.trim().toLowerCase();
     const self = this;
