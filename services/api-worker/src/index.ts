@@ -248,10 +248,8 @@ export default {
         if (!body?.email) return badRequest('email is required');
         if (!isEmail(body.email)) return badRequest('invalid email');
         if (!body?.password) return badRequest('password is required');
-        const user = await env.DB.prepare('SELECT user_id, tenant_id, email, role, password_hash, password_salt FROM users WHERE email = ?1')
-          .bind(body.email)
-          .first<{ user_id: string; tenant_id: string; email: string; role: string; password_hash: string; password_salt: string }>();
         if (!user) return unauthorized();
+        if (!user.password_hash || !user.password_salt) return unauthorized();
         const ok = await verifyPassword(body.password, user.password_hash, user.password_salt);
         if (!ok) return unauthorized();
         const payload = { sub: user.user_id, tenant_id: user.tenant_id, role: user.role, exp: Math.floor(Date.now() / 1000) + 3600 };
