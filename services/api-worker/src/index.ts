@@ -255,7 +255,10 @@ export default {
         const ok = await verifyPassword(body.password, user.password_hash, user.password_salt);
         if (!ok) return unauthorized();
         const payload = { sub: user.user_id, tenant_id: user.tenant_id, role: user.role, exp: Math.floor(Date.now() / 1000) + 3600 };
-        const token = await signJwt(payload, env.JWT_SECRET || '');
+        if (!env.JWT_SECRET) {
+          return serverError('JWT_SECRET is not configured on the server');
+        }
+        const token = await signJwt(payload, env.JWT_SECRET);
         return send({ token, user: { user_id: user.user_id, tenant_id: user.tenant_id, email: user.email, role: user.role } });
       } catch (e: any) {
         return serverError(e?.message);
