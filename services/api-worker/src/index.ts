@@ -154,8 +154,12 @@ export default {
     const headerAuth = request.headers.get('authorization') || '';
     const cookieHeader = request.headers.get('cookie') || '';
     const getCookie = (name: string): string | undefined => {
-      const m = cookieHeader.match(new RegExp(`(?:^|; )${name}=([^;]*)`));
-      return m ? decodeURIComponent(m[1]) : undefined;
+      // Safe cookie parsing: split and compare, no regex
+      for (const part of cookieHeader.split(';')) {
+        const [k, ...v] = part.trim().split('=');
+        if (k === name) return decodeURIComponent(v.join('='));
+      }
+      return undefined;
     };
     const cookieToken = getCookie('auth_token');
 
