@@ -18,7 +18,7 @@ export interface Env {
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore - JSON import for CF Worker bundling
 import openapi from '../openapi.json';
-import { hashPasswordScrypt, verifyPasswordScrypt, randomSalt } from './crypto';
+import { hashPasswordScrypt, verifyPasswordScrypt, randomSalt, toB64 } from './crypto';
 
 const CORS_ORIGIN = '*'; // default
 
@@ -490,7 +490,7 @@ export default {
           try {
             const salt = randomSalt();
             const hash = await hashPasswordScrypt(body.password, salt);
-            const saltB64 = Buffer.from(salt).toString('base64');
+            const saltB64 = toB64(salt);
             await env.DB.prepare(
               'INSERT INTO users (user_id, tenant_id, email, role, password_hash, password_salt) VALUES (?1, ?2, ?3, ?4, ?5, ?6)'
             )
