@@ -3,6 +3,7 @@ C360 API Worker
 Scripts:
 - npm run dev (local dev)
 - npm run deploy (deploy)
+- npm test / npm run test:watch (run tests)
 
 Endpoints:
 - GET /health
@@ -59,3 +60,13 @@ Password columns rollout:
 - 0004_user_password.sql: Adds nullable `password_hash` and `password_salt`.
 - Backfill existing users with passwords before enabling strict auth.
 - 0005_enforce_password_not_null.sql: Recreates `users` with NOT NULL constraints for password fields.
+
+Testing (Workers pool):
+- Tests run inside the Cloudflare Workers runtime using `@cloudflare/vitest-pool-workers` (see `vitest.config.ts`).
+- Run tests:
+	- `npm test --silent` (CI-style)
+	- `npm run test:watch` (local watch mode)
+- Mocks: unit tests use a `MockD1` and a Map-backed KV to avoid real bindings.
+- Notes:
+	- The legacy Miniflare D1 beta warning is gone with the Workers pool.
+	- On Windows you may see temporary Miniflare cache cleanup EBUSY messages at shutdown; they are harmless.
