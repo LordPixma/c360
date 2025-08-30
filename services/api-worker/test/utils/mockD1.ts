@@ -3,14 +3,14 @@ export type Row = Record<string, any>;
 export class MockD1 {
   private tenants: Row[] = [];
   private users: Row[] = [];
+  private apiKeys: Row[] = [];
 
   prepare(sql: string) {
     const lower = sql.trim().toLowerCase();
     const self = this;
     return {
       bind(...args: any[]) {
-        return {
-          async all() {
+        const all = async () => {
             // SELECTS
             if (lower.startsWith('select') && lower.includes('from tenants')) {
               if (lower.includes('where tenant_id = ?1')) {
@@ -35,9 +35,24 @@ export class MockD1 {
               }
               return { results: [...self.users] };
             }
+            if (lower.startsWith('select') && lower.includes('from tenant_api_keys')) {
+              if (lower.includes('where tenant_id = ?1 and key_hash = ?2')) {
+                const [tenantId, keyHash] = args;
+                return { results: self.apiKeys.filter(k => k.tenant_id === tenantId && k.key_hash === keyHash && k.active === 1) };
+              }
+              if (lower.includes('where tenant_id = ?1')) {
+                const [tenantId] = args;
+                return { results: self.apiKeys.filter(k => k.tenant_id === tenantId) };
+              }
+              return { results: [...self.apiKeys] };
+            }
             return { results: [] };
-          },
-          async run() {
+        };
+        const first = async <T = any>() => {
+          const { results } = await all();
+          return (results as any)?.[0] ?? null;
+        };
+        const run = async () => {
             // INSERTS
             if (lower.startsWith('insert into tenants')) {
               const [tenant_id, name] = args;
@@ -47,6 +62,12 @@ export class MockD1 {
             if (lower.startsWith('insert into users')) {
               const [user_id, tenant_id, email, role] = args;
               self.users.push({ user_id, tenant_id, email, role, created_at: new Date().toISOString() });
+              return { meta: { changes: 1 } } as any;
+            }
+            if (lower.startsWith('insert into tenant_api_keys')) {
+              const [tenant_id, key_hash, active = 1] = args;
+              const key_id = self.apiKeys.length + 1;
+              self.apiKeys.push({ key_id, tenant_id, key_hash, active, created_at: new Date().toISOString() });
               return { meta: { changes: 1 } } as any;
             }
             // UPDATES
@@ -65,6 +86,13 @@ export class MockD1 {
               if (role != null) u.role = role;
               return { meta: { changes: 1 } } as any;
             }
+            if (lower.startsWith('update tenant_api_keys set')) {
+              const [tenantId, keyId] = args;
+              const k = self.apiKeys.find(k => k.tenant_id === tenantId && k.key_id === Number(keyId));
+              if (!k) return { meta: { changes: 0 } } as any;
+              k.active = 0;
+              return { meta: { changes: 1 } } as any;
+            }
             // DELETES
             if (lower.startsWith('delete from tenants')) {
               const [id] = args;
@@ -79,8 +107,8 @@ export class MockD1 {
               return { meta: { changes: before - self.users.length } } as any;
             }
             return { meta: { changes: 0 } } as any;
-          }
         };
+        return { all, first, run };
       }
     };
   }
