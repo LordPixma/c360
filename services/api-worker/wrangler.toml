@@ -13,6 +13,7 @@ database_id = "e5539a46-e857-4677-8ba4-ff5798cc0e25"
 [[kv_namespaces]]
 binding = "KV"
 id = "a258aa13ae6542d28b2f3200b206cc69" # TODO: replace with real KV id
+preview_id = "a258aa13ae6542d28b2f3200b206cc69"
 
 [vars]
 # Local/dev default CORS (override in envs below). Use either CORS_ORIGIN (single) or CORS_ORIGINS (comma-separated).
@@ -31,6 +32,7 @@ database_id = "448cd3be-4117-4d6c-bb44-cf89ec21637f"
 [[env.staging.kv_namespaces]]
 binding = "KV"
 id = "3c5041f70b394827b3e853c18d03e290" # TODO: replace with real KV id
+preview_id = "3c5041f70b394827b3e853c18d03e290"
 
 [env.staging.vars]
 # Allow only staging app origins
@@ -49,6 +51,7 @@ database_id = "3cdf8d89-79b4-42de-83db-5446d97d49e8"
 [[env.production.kv_namespaces]]
 binding = "KV"
 id = "9ac7ff65e9b94796b007b2bc156a7d2d" # TODO: replace with real KV id
+preview_id = "9ac7ff65e9b94796b007b2bc156a7d2d"
 
 [env.production.vars]
 # Lock down to exact production origins
