@@ -34,7 +34,6 @@ id = "3c5041f70b394827b3e853c18d03e290" # TODO: replace with real KV id
 
 [env.staging.vars]
 # Allow only staging app origins
-CORS_ORIGIN = "https://staging.app.example.com" # single-origin fallback; not inherited from top-level
 CORS_ORIGINS = "https://staging.app.example.com,https://staging.admin.example.com"
 
 # Production environment
@@ -52,7 +51,6 @@ id = "9ac7ff65e9b94796b007b2bc156a7d2d" # TODO: replace with real KV id
 
 [env.production.vars]
 # Lock down to exact production origins
-CORS_ORIGIN = "https://app.example.com" # single-origin fallback; not inherited from top-level
 CORS_ORIGINS = "https://app.example.com,https://admin.example.com"
 
 # Note: Do NOT put API_TOKEN in this file. Set it securely via:
