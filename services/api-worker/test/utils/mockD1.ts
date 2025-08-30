@@ -29,6 +29,10 @@ export class MockD1 {
                 const [tenantId] = args;
                 return { results: self.users.filter(u => u.tenant_id === tenantId) };
               }
+              if (lower.includes('where email = ?1')) {
+                const [email] = args;
+                return { results: self.users.filter(u => u.email === email) };
+              }
               if (lower.includes('where user_id = ?1')) {
                 const [userId] = args;
                 return { results: self.users.filter(u => u.user_id === userId) };
@@ -45,8 +49,13 @@ export class MockD1 {
               return { meta: { changes: 1 } } as any;
             }
             if (lower.startsWith('insert into users')) {
-              const [user_id, tenant_id, email, role] = args;
-              self.users.push({ user_id, tenant_id, email, role, created_at: new Date().toISOString() });
+              if (args.length >= 6) {
+                const [user_id, tenant_id, email, role, password_hash, password_salt] = args;
+                self.users.push({ user_id, tenant_id, email, role, password_hash, password_salt, created_at: new Date().toISOString() });
+              } else {
+                const [user_id, tenant_id, email, role] = args;
+                self.users.push({ user_id, tenant_id, email, role, created_at: new Date().toISOString() });
+              }
               return { meta: { changes: 1 } } as any;
             }
             // UPDATES

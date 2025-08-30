@@ -15,7 +15,7 @@ describe('tenants and users CRUD', () => {
       async get(key: string) { return this.store.get(key) ?? null; },
       async put(key: string, value: string) { this.store.set(key, value); }
     };
-    const env: any = { DB: new MockD1(), KV: kv, API_TOKEN: 'admin' };
+  const env: any = { DB: new MockD1(), KV: kv, API_TOKEN: 'admin', JWT_SECRET: 'secret' };
 
     // list empty
     let res = await worker.fetch(make('/tenants'), env, {} as any);
@@ -58,7 +58,7 @@ describe('tenants and users CRUD', () => {
       async get(key: string) { return this.store.get(key) ?? null; },
       async put(key: string, value: string) { this.store.set(key, value); }
     };
-    const env: any = { DB: new MockD1(), KV: kv2, API_TOKEN: 'admin' };
+  const env: any = { DB: new MockD1(), KV: kv2, API_TOKEN: 'admin', JWT_SECRET: 'secret' };
 
     // create tenant
     let res = await worker.fetch(make('/tenants', { method: 'POST', body: JSON.stringify({ name: 'T' }), headers: { 'content-type': 'application/json' } }), env, {} as any);
@@ -72,13 +72,13 @@ describe('tenants and users CRUD', () => {
 
     // create user
   // invalid email
-  res = await worker.fetch(make(`/tenants/${tid}/users`, { method: 'POST', body: JSON.stringify({ email: 'bad' }), headers: { 'content-type': 'application/json' } }), env, {} as any);
+  res = await worker.fetch(make(`/tenants/${tid}/users`, { method: 'POST', body: JSON.stringify({ email: 'bad', password: 'password123' }), headers: { 'content-type': 'application/json' } }), env, {} as any);
   expect(res.status).toBe(400);
   // invalid role
-  res = await worker.fetch(make(`/tenants/${tid}/users`, { method: 'POST', body: JSON.stringify({ email: 'ok@ex.com', role: 'owner' }), headers: { 'content-type': 'application/json' } }), env, {} as any);
+  res = await worker.fetch(make(`/tenants/${tid}/users`, { method: 'POST', body: JSON.stringify({ email: 'ok@ex.com', role: 'owner', password: 'password123' }), headers: { 'content-type': 'application/json' } }), env, {} as any);
   expect(res.status).toBe(400);
   // valid
-  res = await worker.fetch(make(`/tenants/${tid}/users`, { method: 'POST', body: JSON.stringify({ email: 'a@ex.com', role: 'admin' }), headers: { 'content-type': 'application/json' } }), env, {} as any);
+  res = await worker.fetch(make(`/tenants/${tid}/users`, { method: 'POST', body: JSON.stringify({ email: 'a@ex.com', role: 'admin', password: 'password123' }), headers: { 'content-type': 'application/json' } }), env, {} as any);
     expect(res.status).toBe(200);
     const user = (await res.json()) as any;
     const uid = user.user_id;
@@ -118,7 +118,7 @@ describe('tenants and users CRUD', () => {
       async get(key: string) { return this.store.get(key) ?? null; },
       async put(key: string, value: string) { this.store.set(key, value); }
     };
-    const env: any = { DB: new MockD1(), KV: kv3, API_TOKEN: 'admin' };
+  const env: any = { DB: new MockD1(), KV: kv3, API_TOKEN: 'admin', JWT_SECRET: 'secret' };
 
     // POST tenant without body
     let res = await worker.fetch(make('/tenants', { method: 'POST', body: '{}', headers: { 'content-type': 'application/json' } }), env, {} as any);

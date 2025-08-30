@@ -16,7 +16,7 @@ describe('api worker', () => {
     expect(data.status).toBe('ok');
   });
 
-  it('tenants list returns array', async () => {
+  it('tenants list returns array (admin token)', async () => {
     const kv: any = {
       store: new Map<string, string>(),
       async get(key: string) { return this.store.get(key) ?? null; },

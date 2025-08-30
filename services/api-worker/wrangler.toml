@@ -18,7 +18,8 @@ preview_id = "a258aa13ae6542d28b2f3200b206cc69"
 [vars]
 # Local/dev default CORS (override in envs below). Use either CORS_ORIGIN (single) or CORS_ORIGINS (comma-separated).
 CORS_ORIGIN = "http://localhost:5173"
-DEV_LOGIN_ENABLED = "true"
+# JWT secret required for issuing/verifying JWTs in dev. Use `wrangler secret put JWT_SECRET` in real envs.
+JWT_SECRET = "devsecret"
 
 # Staging environment
 [env.staging]
@@ -58,3 +59,5 @@ CORS_ORIGINS = "https://app.example.com,https://admin.example.com"
 
 # Note: Do NOT put API_TOKEN in this file. Set it securely via:
 #   wrangler secret put API_TOKEN
+# Also set JWT_SECRET via:
+#   wrangler secret put JWT_SECRET
