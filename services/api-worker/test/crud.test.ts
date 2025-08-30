@@ -2,11 +2,16 @@ import { describe, it, expect } from 'vitest';
 import worker from '../src/index';
 import { MockD1 } from './utils/mockD1';
 
-const make = (path: string, init?: RequestInit) => new Request(`http://localhost${path}`, init);
+const make = (path: string, init: RequestInit = {}) => {
+  const headers = new Headers(init.headers || {});
+  if (!headers.has('authorization')) headers.set('authorization', 'Bearer admintoken');
+  return new Request(`http://localhost${path}`, { ...init, headers });
+};
 
 describe('tenants and users CRUD', () => {
   it('tenant CRUD happy path', async () => {
-    const env: any = { DB: new MockD1(), KV: new Map() };
+    const kv = new Map<string, string>();
+    const env: any = { DB: new MockD1(), KV: { get: async (k: string) => kv.get(k) ?? null, put: async (k: string, v: string) => { kv.set(k, v); } }, API_TOKEN: 'admintoken', JWT_SECRET: 'secret' };
 
     // list empty
     let res = await worker.fetch(make('/tenants'), env, {} as any);
@@ -44,7 +49,8 @@ describe('tenants and users CRUD', () => {
   });
 
   it('user CRUD under tenant', async () => {
-    const env: any = { DB: new MockD1(), KV: new Map() };
+    const kv = new Map<string, string>();
+    const env: any = { DB: new MockD1(), KV: { get: async (k: string) => kv.get(k) ?? null, put: async (k: string, v: string) => { kv.set(k, v); } }, API_TOKEN: 'admintoken', JWT_SECRET: 'secret' };
 
     // create tenant
     let res = await worker.fetch(make('/tenants', { method: 'POST', body: JSON.stringify({ name: 'T' }), headers: { 'content-type': 'application/json' } }), env, {} as any);
@@ -58,13 +64,13 @@ describe('tenants and users CRUD', () => {
 
     // create user
   // invalid email
-  res = await worker.fetch(make(`/tenants/${tid}/users`, { method: 'POST', body: JSON.stringify({ email: 'bad' }), headers: { 'content-type': 'application/json' } }), env, {} as any);
+  res = await worker.fetch(make(`/tenants/${tid}/users`, { method: 'POST', body: JSON.stringify({ email: 'bad', password: 'password123' }), headers: { 'content-type': 'application/json' } }), env, {} as any);
   expect(res.status).toBe(400);
   // invalid role
-  res = await worker.fetch(make(`/tenants/${tid}/users`, { method: 'POST', body: JSON.stringify({ email: 'ok@ex.com', role: 'owner' }), headers: { 'content-type': 'application/json' } }), env, {} as any);
+  res = await worker.fetch(make(`/tenants/${tid}/users`, { method: 'POST', body: JSON.stringify({ email: 'ok@ex.com', role: 'owner', password: 'password123' }), headers: { 'content-type': 'application/json' } }), env, {} as any);
   expect(res.status).toBe(400);
   // valid
-  res = await worker.fetch(make(`/tenants/${tid}/users`, { method: 'POST', body: JSON.stringify({ email: 'a@ex.com', role: 'admin' }), headers: { 'content-type': 'application/json' } }), env, {} as any);
+  res = await worker.fetch(make(`/tenants/${tid}/users`, { method: 'POST', body: JSON.stringify({ email: 'a@ex.com', role: 'admin', password: 'password123' }), headers: { 'content-type': 'application/json' } }), env, {} as any);
     expect(res.status).toBe(200);
     const user = (await res.json()) as any;
     const uid = user.user_id;
@@ -99,7 +105,8 @@ describe('tenants and users CRUD', () => {
   });
 
   it('returns 400/404 appropriately', async () => {
-    const env: any = { DB: new MockD1(), KV: new Map() };
+    const kv = new Map<string, string>();
+    const env: any = { DB: new MockD1(), KV: { get: async (k: string) => kv.get(k) ?? null, put: async (k: string, v: string) => { kv.set(k, v); } }, API_TOKEN: 'admintoken', JWT_SECRET: 'secret' };
 
     // POST tenant without body
     let res = await worker.fetch(make('/tenants', { method: 'POST', body: '{}', headers: { 'content-type': 'application/json' } }), env, {} as any);

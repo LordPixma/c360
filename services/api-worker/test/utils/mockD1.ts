@@ -33,6 +33,10 @@ export class MockD1 {
                 const [userId] = args;
                 return { results: self.users.filter(u => u.user_id === userId) };
               }
+              if (lower.includes('where email = ?1')) {
+                const [email] = args;
+                return { results: self.users.filter(u => u.email === email) };
+              }
               return { results: [...self.users] };
             }
             return { results: [] };
@@ -45,8 +49,13 @@ export class MockD1 {
               return { meta: { changes: 1 } } as any;
             }
             if (lower.startsWith('insert into users')) {
-              const [user_id, tenant_id, email, role] = args;
-              self.users.push({ user_id, tenant_id, email, role, created_at: new Date().toISOString() });
+              if (args.length === 4) {
+                const [user_id, tenant_id, email, role] = args;
+                self.users.push({ user_id, tenant_id, email, role, created_at: new Date().toISOString() });
+              } else {
+                const [user_id, tenant_id, email, role, password_hash, password_salt] = args;
+                self.users.push({ user_id, tenant_id, email, role, password_hash, password_salt, created_at: new Date().toISOString() });
+              }
               return { meta: { changes: 1 } } as any;
             }
             // UPDATES
@@ -79,6 +88,10 @@ export class MockD1 {
               return { meta: { changes: before - self.users.length } } as any;
             }
             return { meta: { changes: 0 } } as any;
+          },
+          async first() {
+            const { results } = await (this as any).all();
+            return (results as any[])[0] ?? null;
           }
         };
       }
