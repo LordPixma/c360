@@ -18,10 +18,6 @@ dependencies = [
 # Only package the 'app' package; exclude 'instance' (config/data) from builds
 packages = ["app"]
 
-[tool.setuptools.packages.find]
-include = ["app"]
-exclude = ["instance", "instance.*"]
-
 [tool.pytest.ini_options]
 minversion = "8.0"
 addopts = "-q"
@@ -31,3 +27,4 @@ testpaths = ["tests"]
 dev = [
   "pytest>=8.2.0",
 ]
+
