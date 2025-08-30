@@ -11,12 +11,12 @@
     console.log('LOGIN STATUS', loginRes.status);
     console.log('LOGIN BODY', loginText);
     if (!loginRes.ok) process.exit(1);
-    const login = JSON.parse(loginText);
-    const token = login.api_key;
-    if (!token) throw new Error('No api_key in login response');
+  const login = JSON.parse(loginText);
+  const token = login.token;
+  if (!token) throw new Error('No token in login response');
 
     const whoRes = await fetch(base + '/whoami', {
-      headers: { Authorization: 'Bearer ' + token }
+  headers: { Authorization: 'Bearer ' + token }
     });
     const whoText = await whoRes.text();
     console.log('WHOAMI STATUS', whoRes.status);

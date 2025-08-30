@@ -4,3 +4,7 @@ CORS_ORIGIN="http://localhost:5173"
 
 # Optional: require Bearer token locally
 # API_TOKEN="local-dev-token"
+
+# JWT secret for issuing/verifying user JWTs in local dev
+# Set a throwaway value for local only; use `wrangler secret put JWT_SECRET` in real envs
+JWT_SECRET="devsecret"

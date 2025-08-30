@@ -13,10 +13,12 @@
     "check": "tsc --noEmit",
     "test": "vitest run -c vitest.config.ts",
     "test:watch": "vitest -c vitest.config.ts",
-    "d1:apply": "wrangler d1 migrations apply c360_dev --remote=false",
-    "d1:create": "wrangler d1 create c360_dev",
-    "d1:list": "wrangler d1 migrations list c360_dev",
-    "d1:execute": "wrangler d1 execute c360_dev --file migrations/0001_init.sql && wrangler d1 execute c360_dev --file migrations/0002_indexes.sql"
+  "d1:apply": "wrangler d1 migrations apply c360_dev --remote=false",
+  "d1:apply:local": "wrangler d1 migrations apply c360_dev --local --persist-to=./.wrangler/d1",
+  "d1:create": "wrangler d1 create c360_dev",
+  "d1:list": "wrangler d1 migrations list c360_dev",
+  "d1:execute": "wrangler d1 execute c360_dev --file migrations/0001_init.sql && wrangler d1 execute c360_dev --file migrations/0002_indexes.sql",
+  "dev:check": "node ./dev-check.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20240821.0",
