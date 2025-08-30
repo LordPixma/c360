@@ -26,11 +26,12 @@ export function IdentityProvider({ children }: { children: React.ReactNode }) {
   const [error, setError] = useState<string | null>(null)
   const inFlight = useRef<Promise<void> | null>(null)
 
-  const logout = useCallback(async () => {
-    setIdentity(null)
-    setError(null)
-    setLoading(false)
-    try { await fetch(`${API_BASE}/auth/logout`, { method: 'POST', credentials: 'include' }) } catch {}
+    try {
+      await fetch(`${API_BASE}/auth/logout`, { method: 'POST', credentials: 'include' })
+    } catch (e: any) {
+      console.error('Logout API call failed:', e)
+      setError(e?.message || 'Logout failed')
+    }
     try { localStorage.removeItem('c360_email') } catch {}
   }, [])
 
