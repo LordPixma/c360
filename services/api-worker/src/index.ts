@@ -207,7 +207,7 @@ export default {
 
     // Health
   if (path === '/health') return send({ status: 'ok', service: 'c360-api' });
-    // Development-only auth: exchange email/password for a tenant API key
+    // Development-only auth: exchange email/password for JWT token
     if (path === '/auth/login' && method === 'POST') {
       try {
         if ((env.DEV_LOGIN_ENABLED || '').toLowerCase() !== 'true') {
