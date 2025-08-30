@@ -17,7 +17,7 @@ describe('api worker', () => {
     const env = { DB: new MockD1(), KV: new Map() } as any;
     const res = await worker.fetch(makeRequest('/tenants'), env, {} as any);
     expect(res.status).toBe(200);
-    const data = await res.json();
+    const data = await res.json() as any;
     expect(Array.isArray(data)).toBe(true);
   });
 });

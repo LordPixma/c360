@@ -11,7 +11,7 @@ describe('tenants and users CRUD', () => {
     // list empty
     let res = await worker.fetch(make('/tenants'), env, {} as any);
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual([]);
+    expect(await res.json() as any).toEqual([]);
 
     // create
     res = await worker.fetch(make('/tenants', { method: 'POST', body: JSON.stringify({ name: 'Acme' }), headers: { 'content-type': 'application/json' } }), env, {} as any);
@@ -54,7 +54,7 @@ describe('tenants and users CRUD', () => {
     // list empty
     res = await worker.fetch(make(`/tenants/${tid}/users`), env, {} as any);
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual([]);
+    expect(await res.json() as any).toEqual([]);
 
     // create user
   // invalid email
