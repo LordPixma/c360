@@ -286,6 +286,7 @@ export default {
 
     // Tenants: list
     if (path === '/tenants' && method === 'GET') {
+      if (!authCtx.admin) return send(errorEnvelope('forbidden', 'Forbidden'), 403);
       try {
         const limitParam = url.searchParams.get('limit');
         const offsetParam = url.searchParams.get('offset');
@@ -296,7 +297,7 @@ export default {
         )
           .bind(limit, offset)
           .all();
-  return send(results ?? []);
+        return send(results ?? []);
       } catch (e: any) {
         return serverError(e?.message);
       }
@@ -304,6 +305,7 @@ export default {
 
     // Tenants: create
     if (path === '/tenants' && method === 'POST') {
+      if (!authCtx.admin) return send(errorEnvelope('forbidden', 'Forbidden'), 403);
       const body = await readJson<{ name?: string }>(request);
       if (!body?.name) return badRequest('name is required');
       const id = crypto.randomUUID();
@@ -316,59 +318,64 @@ export default {
         )
           .bind(id)
           .all();
-  return send(results?.[0] ?? { tenant_id: id, name: body.name });
+        return send(results?.[0] ?? { tenant_id: id, name: body.name });
       } catch (e: any) {
         return serverError(e?.message);
       }
     }
 
-    // Tenant: get by id
+    // Tenant: get/update/delete by id
     {
       const m = match(path, /^\/tenants\/([a-zA-Z0-9-]+)$/);
-      if (m && method === 'GET') {
-        try {
-          const { results } = await env.DB.prepare(
-            'SELECT tenant_id, name, created_at FROM tenants WHERE tenant_id = ?1'
-          )
-            .bind(m[1])
-            .all();
-          if (!results || results.length === 0) return notFound();
-          return send(results[0]);
-        } catch (e: any) {
-          return serverError(e?.message);
+      if (m) {
+        const tenantId = m[1];
+        if (!authCtx.admin && authCtx.tenantId !== tenantId) {
+          return send(errorEnvelope('forbidden', 'Forbidden'), 403);
         }
-      }
-
-      // Tenant: update (PATCH)
-      if (m && method === 'PATCH') {
-        const body = await readJson<{ name?: string }>(request);
-        if (!body || (!body.name)) return badRequest('nothing to update');
-        try {
-          const res = await env.DB.prepare('UPDATE tenants SET name = COALESCE(?2, name) WHERE tenant_id = ?1')
-            .bind(m[1], body.name ?? null)
-            .run();
-          if (res.meta.changes === 0) return notFound();
-          const { results } = await env.DB.prepare(
-            'SELECT tenant_id, name, created_at FROM tenants WHERE tenant_id = ?1'
-          )
-            .bind(m[1])
-            .all();
-          return send(results?.[0] ?? { tenant_id: m[1], name: body.name });
-        } catch (e: any) {
-          return serverError(e?.message);
+        if (method === 'GET') {
+          try {
+            const { results } = await env.DB.prepare(
+              'SELECT tenant_id, name, created_at FROM tenants WHERE tenant_id = ?1'
+            )
+              .bind(tenantId)
+              .all();
+            if (!results || results.length === 0) return notFound();
+            return send(results[0]);
+          } catch (e: any) {
+            return serverError(e?.message);
+          }
         }
-      }
 
-      // Tenant: delete
-      if (m && method === 'DELETE') {
-        try {
-          const res = await env.DB.prepare('DELETE FROM tenants WHERE tenant_id = ?1')
-            .bind(m[1])
-            .run();
-          if (res.meta.changes === 0) return notFound();
-          return send({ deleted: true });
-        } catch (e: any) {
-          return serverError(e?.message);
+        if (method === 'PATCH') {
+          const body = await readJson<{ name?: string }>(request);
+          if (!body || (!body.name)) return badRequest('nothing to update');
+          try {
+            const res = await env.DB.prepare('UPDATE tenants SET name = COALESCE(?2, name) WHERE tenant_id = ?1')
+              .bind(tenantId, body.name ?? null)
+              .run();
+            if (res.meta.changes === 0) return notFound();
+            const { results } = await env.DB.prepare(
+              'SELECT tenant_id, name, created_at FROM tenants WHERE tenant_id = ?1'
+            )
+              .bind(tenantId)
+              .all();
+            return send(results?.[0] ?? { tenant_id: tenantId, name: body.name });
+          } catch (e: any) {
+            return serverError(e?.message);
+          }
+        }
+
+        if (method === 'DELETE') {
+          if (!authCtx.admin) return send(errorEnvelope('forbidden', 'Forbidden'), 403);
+          try {
+            const res = await env.DB.prepare('DELETE FROM tenants WHERE tenant_id = ?1')
+              .bind(tenantId)
+              .run();
+            if (res.meta.changes === 0) return notFound();
+            return send({ deleted: true });
+          } catch (e: any) {
+            return serverError(e?.message);
+          }
         }
       }
     }
@@ -376,94 +383,106 @@ export default {
     // Users under tenant
     {
       const m = match(path, /^\/tenants\/([a-zA-Z0-9-]+)\/users$/);
-      if (m && method === 'GET') {
-        try {
-          const limitParam = url.searchParams.get('limit');
-          const offsetParam = url.searchParams.get('offset');
-          const limit = Math.max(0, Math.min(Number(limitParam ?? 200) || 200, 1000));
-          const offset = Math.max(0, Number(offsetParam ?? 0) || 0);
-          const { results } = await env.DB.prepare(
-            'SELECT user_id, tenant_id, email, role, created_at FROM users WHERE tenant_id = ?1 ORDER BY created_at DESC LIMIT ?2 OFFSET ?3'
-          )
-            .bind(m[1], limit, offset)
-            .all();
-          return send(results ?? []);
-        } catch (e: any) {
-          return serverError(e?.message);
+      if (m) {
+        const tenantId = m[1];
+        if (!authCtx.admin && authCtx.tenantId !== tenantId) {
+          return send(errorEnvelope('forbidden', 'Forbidden'), 403);
         }
-      }
-      if (m && method === 'POST') {
-        const body = await readJson<{ email?: string; role?: string }>(request);
-        if (!body?.email) return badRequest('email is required');
-  if (!isEmail(body.email)) return badRequest('invalid email');
-  const role = body.role || 'member';
-  if (!allowedRoles.has(role)) return badRequest('invalid role');
-        const userId = crypto.randomUUID();
-        try {
-          await env.DB.prepare(
-            'INSERT INTO users (user_id, tenant_id, email, role) VALUES (?1, ?2, ?3, ?4)'
-          )
-            .bind(userId, m[1], body.email, role)
-            .run();
-          const { results } = await env.DB.prepare(
-            'SELECT user_id, tenant_id, email, role, created_at FROM users WHERE user_id = ?1'
-          )
-            .bind(userId)
-            .all();
-          return send(results?.[0] ?? { user_id: userId, tenant_id: m[1], email: body.email, role });
-        } catch (e: any) {
-          return serverError(e?.message);
+        if (method === 'GET') {
+          try {
+            const limitParam = url.searchParams.get('limit');
+            const offsetParam = url.searchParams.get('offset');
+            const limit = Math.max(0, Math.min(Number(limitParam ?? 200) || 200, 1000));
+            const offset = Math.max(0, Number(offsetParam ?? 0) || 0);
+            const { results } = await env.DB.prepare(
+              'SELECT user_id, tenant_id, email, role, created_at FROM users WHERE tenant_id = ?1 ORDER BY created_at DESC LIMIT ?2 OFFSET ?3'
+            )
+              .bind(tenantId, limit, offset)
+              .all();
+            return send(results ?? []);
+          } catch (e: any) {
+            return serverError(e?.message);
+          }
+        }
+        if (method === 'POST') {
+          const body = await readJson<{ email?: string; role?: string }>(request);
+          if (!body?.email) return badRequest('email is required');
+          if (!isEmail(body.email)) return badRequest('invalid email');
+          const role = body.role || 'member';
+          if (!allowedRoles.has(role)) return badRequest('invalid role');
+          const userId = crypto.randomUUID();
+          try {
+            await env.DB.prepare(
+              'INSERT INTO users (user_id, tenant_id, email, role) VALUES (?1, ?2, ?3, ?4)'
+            )
+              .bind(userId, tenantId, body.email, role)
+              .run();
+            const { results } = await env.DB.prepare(
+              'SELECT user_id, tenant_id, email, role, created_at FROM users WHERE user_id = ?1'
+            )
+              .bind(userId)
+              .all();
+            return send(results?.[0] ?? { user_id: userId, tenant_id: tenantId, email: body.email, role });
+          } catch (e: any) {
+            return serverError(e?.message);
+          }
         }
       }
 
       // User by id under tenant
       const mu = match(path, /^\/tenants\/([a-zA-Z0-9-]+)\/users\/([a-zA-Z0-9-]+)$/);
-      if (mu && method === 'GET') {
-        try {
-          const { results } = await env.DB.prepare(
-            'SELECT user_id, tenant_id, email, role, created_at FROM users WHERE tenant_id = ?1 AND user_id = ?2'
-          )
-            .bind(mu[1], mu[2])
-            .all();
-          if (!results || results.length === 0) return notFound();
-          return send(results[0]);
-        } catch (e: any) {
-          return serverError(e?.message);
+      if (mu) {
+        const tenantId = mu[1];
+        if (!authCtx.admin && authCtx.tenantId !== tenantId) {
+          return send(errorEnvelope('forbidden', 'Forbidden'), 403);
         }
-      }
-      if (mu && method === 'PATCH') {
-        const body = await readJson<{ email?: string; role?: string }>(request);
-        if (!body || (body.email == null && body.role == null)) return badRequest('nothing to update');
-  if (body.email != null && !isEmail(body.email)) return badRequest('invalid email');
-  if (body.role != null && !allowedRoles.has(body.role)) return badRequest('invalid role');
-        try {
-          const res = await env.DB.prepare(
-            'UPDATE users SET email = COALESCE(?3, email), role = COALESCE(?4, role) WHERE tenant_id = ?1 AND user_id = ?2'
-          )
-            .bind(mu[1], mu[2], body.email ?? null, body.role ?? null)
-            .run();
-          if (res.meta.changes === 0) return notFound();
-          const { results } = await env.DB.prepare(
-            'SELECT user_id, tenant_id, email, role, created_at FROM users WHERE tenant_id = ?1 AND user_id = ?2'
-          )
-            .bind(mu[1], mu[2])
-            .all();
-          return send(results?.[0] ?? { user_id: mu[2], tenant_id: mu[1], ...body });
-        } catch (e: any) {
-          return serverError(e?.message);
+        if (method === 'GET') {
+          try {
+            const { results } = await env.DB.prepare(
+              'SELECT user_id, tenant_id, email, role, created_at FROM users WHERE tenant_id = ?1 AND user_id = ?2'
+            )
+              .bind(tenantId, mu[2])
+              .all();
+            if (!results || results.length === 0) return notFound();
+            return send(results[0]);
+          } catch (e: any) {
+            return serverError(e?.message);
+          }
         }
-      }
-      if (mu && method === 'DELETE') {
-        try {
-          const res = await env.DB.prepare(
-            'DELETE FROM users WHERE tenant_id = ?1 AND user_id = ?2'
-          )
-            .bind(mu[1], mu[2])
-            .run();
-          if (res.meta.changes === 0) return notFound();
-          return send({ deleted: true });
-        } catch (e: any) {
-          return serverError(e?.message);
+        if (method === 'PATCH') {
+          const body = await readJson<{ email?: string; role?: string }>(request);
+          if (!body || (body.email == null && body.role == null)) return badRequest('nothing to update');
+          if (body.email != null && !isEmail(body.email)) return badRequest('invalid email');
+          if (body.role != null && !allowedRoles.has(body.role)) return badRequest('invalid role');
+          try {
+            const res = await env.DB.prepare(
+              'UPDATE users SET email = COALESCE(?3, email), role = COALESCE(?4, role) WHERE tenant_id = ?1 AND user_id = ?2'
+            )
+              .bind(tenantId, mu[2], body.email ?? null, body.role ?? null)
+              .run();
+            if (res.meta.changes === 0) return notFound();
+            const { results } = await env.DB.prepare(
+              'SELECT user_id, tenant_id, email, role, created_at FROM users WHERE tenant_id = ?1 AND user_id = ?2'
+            )
+              .bind(tenantId, mu[2])
+              .all();
+            return send(results?.[0] ?? { user_id: mu[2], tenant_id: tenantId, ...body });
+          } catch (e: any) {
+            return serverError(e?.message);
+          }
+        }
+        if (method === 'DELETE') {
+          try {
+            const res = await env.DB.prepare(
+              'DELETE FROM users WHERE tenant_id = ?1 AND user_id = ?2'
+            )
+              .bind(tenantId, mu[2])
+              .run();
+            if (res.meta.changes === 0) return notFound();
+            return send({ deleted: true });
+          } catch (e: any) {
+            return serverError(e?.message);
+          }
         }
       }
     }
