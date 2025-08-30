@@ -58,22 +58,22 @@ C360 is a cloud-based, multi-tenant compliance management platform that helps or
 
 ## Architecture & Deployment
 
+*This project standardizes on a Cloudflare Worker backend. An earlier Flask prototype has been removed to prevent maintenance drift.*
+
 ### **Current Infrastructure**
-- **Backend**: Python Flask application with RESTful API
-- **Templates**: Jinja2 templating engine for dynamic content rendering
-- **Frontend**: Modern JavaScript with Flask-served templates
+- **Backend**: Cloudflare Worker (TypeScript) with RESTful API
+- **Frontend**: Modern JavaScript app served separately
 - **Database**: Multi-tenant Cloudflare D1 architecture with strict tenant isolation
 - **CDN & Edge**: Cloudflare for global content delivery and performance optimization
-- **Security**: End-to-end encryption, comprehensive audit logging, and Flask-Security integration
+- **Security**: End-to-end encryption and comprehensive audit logging
 
 ### **Technical Stack**
-- **Framework**: Flask (Python 3.9+) 
-- **Template Engine**: Jinja2 for server-side rendering
+- **Framework**: Cloudflare Workers (TypeScript)
 - **Database**: Cloudflare D1 (SQLite-based) with multi-tenant architecture
-- **Authentication**: Flask-Login with multi-factor authentication support
-- **API**: RESTful endpoints with Flask-RESTful
+- **Authentication**: Token-based authentication
+- **API**: RESTful endpoints built with native Worker APIs
 - **Caching**: Cloudflare KV for session management and performance optimization
-- **Hosting**: Cloudflare Workers/Pages with Flask application
+- **Hosting**: Cloudflare Workers/Pages
 - **CDN**: Cloudflare for global edge caching and DDoS protection
 
 ### **Cloudflare Integration**
@@ -88,7 +88,7 @@ C360 is a cloud-based, multi-tenant compliance management platform that helps or
 - **Analytics**: Cloudflare Analytics for traffic insights and performance monitoring
 
 ### **Deployment Architecture**
-- **Serverless Flask**: Python Flask application running on Cloudflare Workers
+- **Serverless Worker**: TypeScript Cloudflare Worker running on Cloudflare's edge network
 - **Edge Database**: D1 SQLite databases replicated across Cloudflare's global network
 - **Global Distribution**: Application and data served from 200+ locations worldwide
 - **Zero Cold Starts**: Instant response times with Cloudflare's edge computing
